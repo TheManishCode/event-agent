@@ -9,7 +9,7 @@ subtitle: "Design and status for the follow-through jobs (ADR-044)"
 |---|---|
 | `jobs.py`: Job model, SQLite store (private file), legal transitions, version check (stale writes refused), event history, time-zone-aware timestamps only | Built, tested |
 | `claims.py`: price claims from replies; the amount must be written out as such (a multiplier counts only when the vendor wrote it); the vendor's stated validity is captured only when written | Built, tested (32-reply English and Hinglish labelled set: 17 of 19 recordable prices found, 0 wrong proposals) |
-| `worker.py`: `tick()`, start job from saved vendor contacts (recipient snapshotted per job), approve requests, confirm (the user states the validity) or reject a claim, nudges, expiry, digest text; CLI `python -m eventmate.worker --once/--every` and `eventmate jobs ...` | Built, tested |
+| `worker.py`: `tick()`, start job from saved vendor contacts (recipient snapshotted per job), approve requests, confirm (the user states the validity) or reject a claim, nudges, expiry, digest text; CLI `python -m eventmate.followthrough.worker --once/--every` and `eventmate jobs ...` | Built, tested |
 | One permission: automatic nudges go through the standing permission of ADR-043 (kill switch, window, caps, disclosure); there is no second grant system | Built, tested |
 | One claimant per outbound action (`action_key`), a dispatch-time veto for automatic messages of an ended job, a file lock so the web process and a separate worker cannot both claim a send | Built, tested (real concurrent processes) |
 | API (`/api/plans/<id>/jobs`, `/api/jobs/...`), Quote jobs panel in the Vendor chats tab, tab badge, CLI | Built, tested (Chromium) |
@@ -58,7 +58,7 @@ Principles: the **state machine owns the goal**, the LLM never owns state; every
 
 ## 4. Data model (new files, same Pydantic style)
 
-`eventmate/jobs.py` (built), stored in SQLite (`jobs.db`) from day one. The code differs from the sketch below in small ways: vendor progress, claims and open user items live inside the Job, and the Grant is embedded in the Job. JSONL is fine for logs, but jobs need atomic claims across a worker and the web process.
+`eventmate/followthrough/jobs.py` (built), stored in SQLite (`jobs.db`) from day one. The code differs from the sketch below in small ways: vendor progress, claims and open user items live inside the Job, and the Grant is embedded in the Job. JSONL is fine for logs, but jobs need atomic claims across a worker and the web process.
 
 ```python
 JobStatus = Literal["active", "waiting_vendor", "waiting_user", "blocked",
@@ -107,7 +107,7 @@ Add a `job_id` field to `OutreachDraft` and `InboundMessage` (optional, default 
 
 ## 5. The worker
 
-`eventmate/worker.py`. One function does the work and is safe to call any number of times.
+`eventmate/followthrough/worker.py`. One function does the work and is safe to call any number of times.
 
 ```python
 def tick(now) -> TickReport:
@@ -119,7 +119,7 @@ def tick(now) -> TickReport:
             store.finish(job, next_status, next_action, wake_at)   # ALWAYS sets a next state and a wake time
 ```
 
-How it runs: a loop in a separate process (`python -m eventmate.worker --every 60`) or a systemd timer / cron calling `tick` once. Inbound speed-up: WAHA webhook and an IMAP IDLE or 1-2 minute poll insert an "event" row that sets `wake_at = now` for the matching job. Polling is the fallback, not the main path.
+How it runs: a loop in a separate process (`python -m eventmate.followthrough.worker --every 60`) or a systemd timer / cron calling `tick` once. Inbound speed-up: WAHA webhook and an IMAP IDLE or 1-2 minute poll insert an "event" row that sets `wake_at = now` for the matching job. Polling is the fallback, not the main path.
 
 ### Decision rules (no model needed for most of it)
 
@@ -134,7 +134,7 @@ Use an LLM only for: classifying ambiguous replies into the claim schema, and dr
 
 ## 6. Closing the reply loop (the main missing link)
 
-Today `ReplyAnalysis` quotes amounts but nothing records them. Add `eventmate/claims.py`:
+Today `ReplyAnalysis` quotes amounts but nothing records them. Add `eventmate/followthrough/claims.py`:
 
 ```python
 class QuoteClaim(_Model):
@@ -210,7 +210,7 @@ Rules-first keeps most ticks free. Cache claim extraction by message hash. Use a
 
 ## 11. User updates
 
-`eventmate/notify.py`: a digest sent through the channel you already use (a WhatsApp number via your own WAHA, or email), only when something needs you or a job finishes. Format: "Caterer job: 2 of 3 quotes in. Royal Rasoi INR 66,000 total (confirm 1 / not 2). Annapurna asks: is it for children too? Draft answer: ... (send 3 / edit 4)". Reply tokens map to decisions bound to the item's content hash, same as approvals. Do not send price positions or your budget in these notices to anyone but you.
+`eventmate/messaging/notify.py`: a digest sent through the channel you already use (a WhatsApp number via your own WAHA, or email), only when something needs you or a job finishes. Format: "Caterer job: 2 of 3 quotes in. Royal Rasoi INR 66,000 total (confirm 1 / not 2). Annapurna asks: is it for children too? Draft answer: ... (send 3 / edit 4)". Reply tokens map to decisions bound to the item's content hash, same as approvals. Do not send price positions or your budget in these notices to anyone but you.
 
 <div style="page-break-before:always"></div>
 

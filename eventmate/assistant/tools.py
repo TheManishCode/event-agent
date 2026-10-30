@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from eventmate.assistant.approvals import ApprovalError, ApprovalQueue, Proposal
 from eventmate.assistant.identity import Perm, Principal
 from eventmate.assistant.knowledge import KnowledgeBase
-from eventmate.reality import reality_check
+from eventmate.pricing.reality import reality_check
 from eventmate.schemas import Disruption, LedgerKind, VendorCategory
 from eventmate.service import EventMate
 

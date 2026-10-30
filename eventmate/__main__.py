@@ -16,7 +16,7 @@
     python -m eventmate discover CITY [--kind venue|hotel|restaurant] [--limit N] [--json]   # OpenStreetMap places: candidates only
     python -m eventmate multicity LEG LEG... [--json]   # LEG = ORIGIN,DEST,YYYY-MM-DD; built from separate one-way searches
     python -m eventmate outreach PLAN_ID CATEGORY {email|whatsapp} RECIPIENT --name NAME [--json]   # write a quote request and a link; you send it, nothing is sent
-    python -m eventmate jobs [show|start|approve|confirm|reject|resolve|nudge|cancel|tick] ...   # follow-through jobs; `python -m eventmate.worker --every 60` runs them
+    python -m eventmate jobs [show|start|approve|confirm|reject|resolve|nudge|cancel|tick] ...   # follow-through jobs; `python -m eventmate.followthrough.worker --every 60` runs them
     python -m eventmate inbox [show|poll|approve|deny|autoreply|kill|resume] [PLAN_ID] [DRAFT_ID --hash H] [--watch SECONDS]   # the agent sends what you approve and reads replies
     python -m eventmate quotes {show VENDOR_ID | compare CATEGORY | score CATEGORY} [--json]   # recorded vendor quotes (record them via the web API)
 
@@ -40,9 +40,9 @@ from eventmate.llm import client_from_env
 from eventmate.plan_store import PlanIntegrityError
 from eventmate.schemas import Disruption, DisruptionKind, VendorCategory
 from eventmate.service import EventMate
-from eventmate.discovery import DiscoveryError
-from eventmate.travel import TravelError, check_date
-from eventmate.weather import WeatherError
+from eventmate.integrations.discovery import DiscoveryError
+from eventmate.integrations.travel import TravelError, check_date
+from eventmate.integrations.weather import WeatherError
 
 COMMANDS = {"jobs", "inbox", "outreach", "plan", "confirm", "replan", "show", "diff", "validate", "list", "intake", "tradeoffs", "ledger", "quotes", "flights", "multicity", "discover", "weather", "deals"}
 
@@ -351,7 +351,7 @@ def _travel(em: EventMate, a) -> int:
 
 def _deals(em: EventMate, a) -> int:
     from eventmate.schemas import DealQuery
-    from eventmate.websearch import SearchError
+    from eventmate.integrations.websearch import SearchError
 
     try:
         rep = em.find_deals(DealQuery(kind=a.kind, city=a.city, guests=a.guests, nights=a.nights, budget_inr=a.budget, limit=a.limit))
@@ -434,7 +434,7 @@ def _outreach(em: EventMate, a) -> int:
 def _jobs(em: EventMate, a) -> int:
     from datetime import datetime, timedelta, timezone
 
-    from eventmate.worker import digest
+    from eventmate.followthrough.worker import digest
 
     w = em.jobs
     if a.what == "tick":

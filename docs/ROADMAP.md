@@ -26,7 +26,7 @@ solver-verified plans, provenance-tracked vendor quotes, bounded negotiation, an
 | # | Feature | Decision | Phase | Notes / reason |
 |---|---|---|---|---|
 | F1 | Trade-off Negotiator (ranked options: harm, extra spend, verified) | Accept (done 2026-10-30) | 1 | ADR-015; CLI `tradeoffs`, API `/api/tradeoffs`, UI card |
-| F2 | Budget Reality Check up front | Accept (done 2026-10-30) | 1 | ADR-016; API `reality`, UI card, CLI `plan` (stderr); `eventmate/reality.py` |
+| F2 | Budget Reality Check up front | Accept (done 2026-10-30) | 1 | ADR-016; API `reality`, UI card, CLI `plan` (stderr); `eventmate/pricing/reality.py` |
 | F3 | Live budget ledger (planned / quoted / paid / pending / variance) | Accept (done 2026-10-30) | 1 | ADR-017; CLI `ledger`, API `/api/plans/<id>/ledger`, Budget-tab card; payments are user-entered, never processed |
 | F4 | "Why?" panel in UI for every recommendation | Accept (done 2026-10-30) | 1 | Vendors tab button; shows hard constraints checked, confidence, source from the decision log |
 | F5 | Timezone/calendar-aware, multi-organizer scheduler | Accept (multi-organizer done 2026-10-30; zones, working hours, multi-day open) | 2 | ADR-004, ADR-020 |

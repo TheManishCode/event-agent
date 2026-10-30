@@ -25,37 +25,37 @@ from eventmate.agents.scheduler import SchedulingAgent
 from eventmate.agents.tradeoff import TradeoffAgent
 from eventmate.agents.validator import ValidatorAgent
 from eventmate.agents.vendor import VendorAgent, VendorRepository
-from eventmate.leads import LeadStore
-from eventmate import community as community_mod
-from eventmate.community import AccessibilityStore, ChecklistStore
-from eventmate.digests import DigestStore
-from eventmate.notify import OwnerNotifier
-from eventmate.ideas import IdeaService
-from eventmate.channels import Channel, channels_from_env
-from eventmate.conversations import ConversationService
-from eventmate.outreach import OutreachStore
-from eventmate.worker import JobWorker
-from eventmate.jobs import JobStore
-from eventmate.ledger import Ledger
-from eventmate.observations import ObservationStore
-from eventmate.vendorscore import score_category
-from eventmate import intake
+from eventmate.integrations.leads import LeadStore
+from eventmate.planning import community as community_mod
+from eventmate.planning.community import AccessibilityStore, ChecklistStore
+from eventmate.messaging.digests import DigestStore
+from eventmate.messaging.notify import OwnerNotifier
+from eventmate.planning.ideas import IdeaService
+from eventmate.messaging.channels import Channel, channels_from_env
+from eventmate.messaging.conversations import ConversationService
+from eventmate.messaging.outreach import OutreachStore
+from eventmate.followthrough.worker import JobWorker
+from eventmate.followthrough.jobs import JobStore
+from eventmate.pricing.ledger import Ledger
+from eventmate.pricing.observations import ObservationStore
+from eventmate.pricing.vendorscore import score_category
+from eventmate.planning import intake
 from eventmate.llm import LLMClient, client_from_env
 from eventmate.logs import RunLogs
-from eventmate.rules import Advisory, advisories_for
+from eventmate.planning.rules import Advisory, advisories_for
 from eventmate.plan_store import PlanStore, draft_from_plan
 from eventmate.schemas import WeatherAdvice, BookingStatus, DecisionLogEntry, SelectionQuoteStatus, LedgerEntry, LedgerSummary, Disruption, DisruptionKind, PlanDiff, PlanOutcome, PlanVersion, ReplanOutcome, TradeoffOption, TradeoffReport, ValidationReport, VendorCategory
 from eventmate.symbolic import SymbolicChecker
-from eventmate.deals import DealAgent
-from eventmate.discovery import OverpassSource
-from eventmate.web_access import SafeFetcher
-from eventmate.websearch import default_provider
+from eventmate.integrations.deals import DealAgent
+from eventmate.integrations.discovery import OverpassSource
+from eventmate.integrations.web_access import SafeFetcher
+from eventmate.integrations.websearch import default_provider
 from eventmate.env import load_env
-from eventmate.places import PlacesSource
-from eventmate.weather import OpenWeatherSource
-from eventmate.weather_advice import advise
-from eventmate.travel import FlightProvider, FliProvider, check_search, search_multi_city
-from eventmate.tripsearch import search_trip
+from eventmate.integrations.places import PlacesSource
+from eventmate.integrations.weather import OpenWeatherSource
+from eventmate.integrations.weather_advice import advise
+from eventmate.integrations.travel import FlightProvider, FliProvider, check_search, search_multi_city
+from eventmate.integrations.tripsearch import search_trip
 
 
 class _NoClients:

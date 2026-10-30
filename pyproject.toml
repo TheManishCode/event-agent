@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eventmate"
+version = "0.1.0"
+description = "A constraint-verified event planning copilot for weddings, birthdays and community events"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = ["pydantic>=2.11", "ortools>=9.12", "flask>=3.1"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pyflakes", "bandit", "playwright"]
+flights = ["flights"]  # fli: Google Flights fares; optional
+
+[project.scripts]
+eventmate = "eventmate.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["eventmate*"]
+
+[tool.setuptools.package-data]
+eventmate = ["data/*.json", "data/knowledge/*", "web/static/*", "assistant/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider"

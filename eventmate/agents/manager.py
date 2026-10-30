@@ -18,12 +18,12 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from pydantic import ValidationError
 
-from eventmate.community import load_profiles, match_subtype
+from eventmate.planning.community import load_profiles, match_subtype
 from eventmate.agents.budget import BudgetAgent
 from eventmate.agents.guest import GuestAgent, GuestRepository
 from eventmate.agents.vendor import VendorAgent, VendorRepository
 from eventmate.decision_logger import DecisionLogger
-from eventmate.reality import reality_check
+from eventmate.pricing.reality import reality_check
 from eventmate.schemas import (
     MAX_BUDGET_INR,
     MAX_GUESTS,

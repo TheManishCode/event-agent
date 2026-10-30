@@ -24,7 +24,7 @@ EVENTMATE_IMAP_PORT=993
 
 ## 4. Check the settings without sending anything
 ```
-python -m eventmate.smoke_email
+python -m eventmate.messaging.smoke_email
 ```
 It logs in to SMTP and IMAP (the inbox is opened read-only) and prints only PASS or FAIL and the host. It never prints the user name, the password or the server's own error text. A real one-message test needs both `--send-test-to ADDRESS --i-own-this-address`.
 

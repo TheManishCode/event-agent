@@ -18,7 +18,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from eventmate.agents.budget import BudgetPolicy
 from eventmate.assistant.identity import Perm, Principal
-from eventmate.rules import load_packs
+from eventmate.planning.rules import load_packs
 from eventmate.schemas import _Model
 
 KNOWLEDGE_DIR = Path(__file__).resolve().parent.parent / "data" / "knowledge"

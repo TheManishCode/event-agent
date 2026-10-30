@@ -41,7 +41,7 @@ class BudgetPolicy(_Model):
         """A community event uses its own profile's shares (data, adjustable by the user through cap_weights), not the wedding-style default."""
         if request.event_type != EventType.COMMUNITY:
             return self
-        from eventmate.community import profile_for
+        from eventmate.planning.community import profile_for
 
         return self.model_copy(update={"weights_bp": dict(profile_for(request).weights)})
 

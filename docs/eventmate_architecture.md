@@ -2,7 +2,7 @@
 
 EventMate turns a natural-language event request into a validated, explainable, replannable itinerary.
 It lives in `eventmate/`, a sibling of the base `src/llm_plan` PDDL/LangGraph pipeline (untouched).
-See `eventmate/README.md` for usage.
+See the top-level `README.md` for usage.
 
 ## Pipeline
 

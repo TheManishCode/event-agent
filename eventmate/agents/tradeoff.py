@@ -22,7 +22,7 @@ from eventmate.agents.budget import BudgetAgent, BudgetPolicy, compute_allocatio
 from eventmate.agents.manager import MAX_EVENT_AHEAD_DAYS
 from eventmate.agents.vendor import VendorAgent, VendorRepository
 from eventmate.decision_logger import DecisionLogger
-from eventmate.reality import cheapest_eligible
+from eventmate.pricing.reality import cheapest_eligible
 from eventmate.schemas import (
     MAX_BUDGET_INR,
     AgentName,

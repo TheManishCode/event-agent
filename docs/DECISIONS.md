@@ -184,7 +184,7 @@ Status: accepted (2026-10-30). Implements F2; the work was done in the previous 
 Context: Users should learn immediately whether a budget is realistic, before any plan exists, without the
 system pretending to know market prices it does not have.
 Decision:
-1. `eventmate/reality.py::reality_check` is a pure function over database records. Floor = sum of the cheapest
+1. `eventmate/pricing/reality.py::reality_check` is a pure function over database records. Floor = sum of the cheapest
    *eligible* vendor per requested service (category caps lifted, every other hard constraint applied) via the
    shared helper `cheapest_eligible` (also used by the Trade-off Negotiator; no duplicate logic).
 2. Verdicts: `comfortable` (floor <= `BudgetPolicy.comfortable_bp` of budget after contingency, default 85%),
@@ -279,7 +279,7 @@ Status: accepted (2026-10-30). Implements the safe part of F7; refines ROADMAP F
 Context: F7 asked for cultural/dietary rule packs. EventMate has no verified knowledge of rituals or traditions, and rule 1
 forbids invented facts. Dietary requirements already work as hard constraints against caterer data.
 Decision:
-1. Packs are data (`eventmate/data/rule_packs.json`, schema_version 1), loaded by `eventmate/rules.py` with the same fail-closed
+1. Packs are data (`eventmate/data/rule_packs.json`, schema_version 1), loaded by `eventmate/planning/rules.py` with the same fail-closed
    posture as the vendor data: size cap, `extra=forbid`, unique ids, plain text only (no `<`, `>`, newlines), item/length bounds.
 2. A pack is keyed by a dietary requirement (jain, halal, vegan, vegetarian, gluten_free) and holds checklist items phrased as
    questions to ask a vendor or host ("confirm with the host family"). Items never pass or fail a constraint and never touch a plan.
@@ -300,7 +300,7 @@ it matters and no prompt-injection path. OpenMuse (`_refs/openmuse`, MIT, commit
 panels are strict-schema choices the model can only pick between, its approvals are bound to the reviewed content, and its own
 SECURITY.md admits an injected agent with open egress can leak data. We copy the ideas, not code.
 Decision:
-1. `eventmate/intake.py` turns the organiser's words into an `IntakeDraft` (every field optional). The deterministic parser always
+1. `eventmate/planning/intake.py` turns the organiser's words into an `IntakeDraft` (every field optional). The deterministic parser always
    runs; if `EVENTMATE_ENABLE_LLM=1` and a key exists, an LLM also reads the message (`prompts/intake.extract.v1.md`, output format only).
 2. The model has no tools, no network, no state and no authority. Its reply is accepted only as one JSON object that passes the
    strict schema (`extra=forbid`, enums, bounds, short plain-text city of at most 3 words). Anything else is dropped and the
@@ -449,7 +449,7 @@ Findings: fli (MIT, commit 881aee5, read and run 2026-10-30) does not have a bug
 header only the page's JavaScript can produce, so fli raises `SearchUnsupportedError` by design (upstream issue #223). One-way search works live
 (DEL-BOM returned 61 results). Prices default to USD, so INR must be requested.
 Decision:
-1. Flights: `eventmate/travel.py`, `FlightProvider` interface, `FliProvider` adapter (fli imported lazily; optional dependency, missing = clear
+1. Flights: `eventmate/integrations/travel.py`, `FlightProvider` interface, `FliProvider` adapter (fli imported lazily; optional dependency, missing = clear
    `TravelError`). Results are frozen models tagged `tool:fli`: INR whole rupees, schedule per segment, Google Flights deep link (https prefix enforced).
    A price in any other currency is never shown as rupees. Airport codes are validated (three capitals, must exist in fli's list) before any call, in the
    service, so every provider gets the same checks. API `/api/travel/flights`, `/api/travel/multi-city`; CLI `flights`, `multicity`.
@@ -464,7 +464,7 @@ Decision:
    orders or payments, so they stay behind the F12/F13 approval queue and are not touched in the MVP; Kiwi access terms are unverified.
 Risks stated plainly: fli reverse-engineers an undocumented Google page, so it can break or be rate-limited without notice, and its terms of use are the
 user's to check (same stance as ADR-024). Results are 20-60 rows and thinner for children or premium cabins.
-Venue discovery as built: `eventmate/discovery.py` calls the Overpass API directly (the clients the user listed are thin wrappers, and an own query
+Venue discovery as built: `eventmate/integrations/discovery.py` calls the Overpass API directly (the clients the user listed are thin wrappers, and an own query
 builder keeps user text out of the query: the city name is allow-listed and quoted). API `/api/discover/venues`, CLI `discover`. Candidates are tagged
 `tool:overpass`, carry the ODbL attribution, have no price or availability, and drop any optional field (website, capacity) that fails validation.
 Results are cached for an hour; a busy public server (HTTP 429/502/503/504) is reported as busy. **Not verified live**: on 2026-10-30 overpass-api.de
@@ -483,7 +483,7 @@ Decision:
    environment variables; `.env` is just how they get set locally. `.env` is git-ignored; `.env.example` (no values) is the template.
 2. The existing `.env` was reformatted to `OPENWEATHER_API_KEY=<value>`, mode 600. We assumed the bare value is the OpenWeather key, which is what the
    user said it was for; a 32-hex string matches that format but we could not confirm it.
-3. `eventmate/weather.py`: free 5-day / 3-hour forecast plus geocoding. The key is sent only in the request URL and is never logged or returned: every
+3. `eventmate/integrations/weather.py`: free 5-day / 3-hour forecast plus geocoding. The key is sent only in the request URL and is never logged or returned: every
    failure is replaced by a fixed message (401, 404, 429, timeout, bad JSON, oversize). The city passes the same allow-list as discovery and is URL-encoded.
    Slots are grouped by the place's local date. Past the horizon, or before the forecast starts, the result has no slots and a note: nothing is estimated.
    Rain is "possible" at a chance of 0.3 or more (a code constant, not an LLM judgment). Place name resolved by OpenWeather is shown so a wrong
@@ -716,7 +716,7 @@ A claim becomes a quote only when the user confirms it (ADR-025 holds); the user
 Changes from the delivered code, each found by review or by a failing test: (1) its separate `Grant` was replaced by the standing permission of ADR-043 (it would have bypassed the kill switch, the window and the disclosure); (2) confirming a claim silently assumed 14 days of validity, now the user chooses and the vendor's stated validity is only suggested;
 (3) its amount check let a bare "66" vouch for 66,000, now a multiplier counts only when written; (4) `OutreachStore` read-check-write steps were not safe across processes, so a separate worker process plus the web server could double-send (12 of 12 processes claimed one send in a test), now an exclusive file lock, tested with real processes and checked by removing the lock;
 (5) a queued nudge went out a tick late, so the worker dispatches again after its jobs; (6) a naive deadline crashed with a TypeError, now every timestamp must carry a time zone; (7) a cancelled job left automatic messages queued, now they are denied and dispatch vetoes them independently; (8) both a job and the permission could answer one reply, now one claimant per `action_key`; (9) the recipient is snapshotted per job.
-Interfaces: API `GET/POST /api/plans/<id>/jobs`, `POST /api/jobs/<id>/approve-requests|cancel`, `.../claims/<c>/confirm|reject`, `.../items/<i>/resolve|approve-nudge`, `POST /api/jobs/tick`; CLI `jobs show|start|approve|confirm|reject|resolve|nudge|cancel|tick` and `python -m eventmate.worker --once|--every N` (stop file in `EVENTMATE_WORKER_STOP`);
+Interfaces: API `GET/POST /api/plans/<id>/jobs`, `POST /api/jobs/<id>/approve-requests|cancel`, `.../claims/<c>/confirm|reject`, `.../items/<i>/resolve|approve-nudge`, `POST /api/jobs/tick`; CLI `jobs show|start|approve|confirm|reject|resolve|nudge|cancel|tick` and `python -m eventmate.followthrough.worker --once|--every N` (stop file in `EVENTMATE_WORKER_STOP`);
 the web process runs the same round in its background loop when any job exists; a Quote jobs panel in the Vendor chats tab.
 Measured: a 32-reply English and Hinglish labelled set written for this project (not real vendor data): 19 replies hold a price worth recording, 17 were found, 2 missed (both went to the user), 0 wrong prices proposed. The set shows the guard works; it says nothing about real replies.
 Not done: notification of the user outside the UI (a digest text exists, sending it is a separate step), PDF quotes, LLM extraction, automatic next candidate, automatic replan after a confirmation (re-pricing stays a manual click), webhooks, per-job token budgets (no model is used), stuck-job escalation after 72 hours.
@@ -741,7 +741,7 @@ Consequences: about 130 tests across `test_community*.py`, `test_intake_communit
 
 ## ADR-047: Email flow end to end with fakes, owner digest, and a mailbox smoke check
 Status: accepted (2026-10-31).
-Decision: (1) `tests/test_email_flow_e2e.py` runs the real `EmailChannel` against a fake SMTP server and fake IMAP mailbox (`tests/mailfake.py`) through brief, plan, job, approval, plain/Hinglish/ambiguous replies, claim, confirmation and digest, and shows the plan unchanged until the user presses the existing re-price. Replies that repeat, come from another sender (flagged, no claim, never answered automatically), quote history, robots, unknown send outcome, kill switch, window and caps are covered. (2) Bug fixed: the worker raised an item for a reply the standing permission had already answered; it now watches the permission's answer and returns the reply to the user if that answer is denied or fails. A question in an earlier reply of the same round also blocks an automatic answer. (3) Digests are always written to the in-app inbox when content changes. An owner email copy is off by default; enabling is two steps (propose the exact address and scope, then confirm with a code bound to them); any change returns it to pending; vendor addresses and the sending mailbox are refused; the email passes the kill switch, stop file, 09:00-20:00 IST window, 4 per day and 30 minute gap, is logged without content, an unknown outcome is never resent, and it never contains the budget or a money-bearing goal. (4) `python -m eventmate.smoke_email` checks logins read-only and prints only PASS/FAIL and host. (5) `EMAIL_SETUP.md`, `EMAIL_VALIDATION.md` (not yet run).
+Decision: (1) `tests/test_email_flow_e2e.py` runs the real `EmailChannel` against a fake SMTP server and fake IMAP mailbox (`tests/mailfake.py`) through brief, plan, job, approval, plain/Hinglish/ambiguous replies, claim, confirmation and digest, and shows the plan unchanged until the user presses the existing re-price. Replies that repeat, come from another sender (flagged, no claim, never answered automatically), quote history, robots, unknown send outcome, kill switch, window and caps are covered. (2) Bug fixed: the worker raised an item for a reply the standing permission had already answered; it now watches the permission's answer and returns the reply to the user if that answer is denied or fails. A question in an earlier reply of the same round also blocks an automatic answer. (3) Digests are always written to the in-app inbox when content changes. An owner email copy is off by default; enabling is two steps (propose the exact address and scope, then confirm with a code bound to them); any change returns it to pending; vendor addresses and the sending mailbox are refused; the email passes the kill switch, stop file, 09:00-20:00 IST window, 4 per day and 30 minute gap, is logged without content, an unknown outcome is never resent, and it never contains the budget or a money-bearing goal. (4) `python -m eventmate.messaging.smoke_email` checks logins read-only and prints only PASS/FAIL and host. (5) `EMAIL_SETUP.md`, `EMAIL_VALIDATION.md` (not yet run).
 Not done: any real-mailbox run (Task 4 is the user's), WhatsApp changes, attachments.
 Consequences: tests `test_email_flow_e2e`, `test_digest_notify`, `test_smoke_email`.
 

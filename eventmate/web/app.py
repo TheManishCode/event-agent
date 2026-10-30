@@ -33,7 +33,7 @@ from typing import Callable, Deque, Dict, List, Literal, Optional
 from flask import Flask, Response, abort, g, jsonify, request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from eventmate import intake
+from eventmate.planning import intake
 from eventmate.assistant.agent import Assistant, AssistantError
 from eventmate.assistant.approvals import ApprovalError
 from eventmate.assistant.identity import LOCAL_ORGANIZER, Perm, Principal
@@ -41,18 +41,18 @@ from eventmate.agents.guest import GuestDataError
 from eventmate.agents.manager import RequestParseError
 from eventmate.agents.vendor import DataIntegrityError
 from eventmate.env import load_env
-from eventmate.explore import ExploreError, ExploreNotConfigured, route as explore_route
+from eventmate.integrations.explore import ExploreError, ExploreNotConfigured, route as explore_route
 from eventmate.llm import LLMError, client_from_env
 from eventmate.plan_store import PlanIntegrityError
 from eventmate.schemas import MAX_BUDGET_INR, CommunityDetails, DealQuery, TripRequest, MAX_MULTI_CITY_LEGS, Disruption, HiddenCost, LedgerKind, ObservationSource, TradeoffOption, VendorCategory
-from eventmate.discovery import DiscoveryError
-from eventmate.places import PlacesError, PlacesNotConfigured
+from eventmate.integrations.discovery import DiscoveryError
+from eventmate.integrations.places import PlacesError, PlacesNotConfigured
 from eventmate.service import EventMate
-from eventmate.weather import WeatherError, WeatherNotConfigured
-from eventmate.jobs import StaleJob
-from eventmate.worker import digest
-from eventmate.websearch import SearchError
-from eventmate.travel import CABINS, TravelError, check_date
+from eventmate.integrations.weather import WeatherError, WeatherNotConfigured
+from eventmate.followthrough.jobs import StaleJob
+from eventmate.followthrough.worker import digest
+from eventmate.integrations.websearch import SearchError
+from eventmate.integrations.travel import CABINS, TravelError, check_date
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 STATIC_FILES = {"app.js": "text/javascript; charset=utf-8", "style.css": "text/css; charset=utf-8", "favicon.svg": "image/svg+xml"}
@@ -933,7 +933,7 @@ def create_app(
     @app.get("/api/community/profiles")
     def community_profiles():
         """The community subtypes (data in community_profiles.json) for the intake review card."""
-        from eventmate.community import load_profiles
+        from eventmate.planning.community import load_profiles
 
         p = load_profiles()
         return jsonify({"default": p.default, "version": p.version, "reviewed": p.reviewed, "profiles": [{"key": k, "label": v.label} for k, v in p.profiles.items()]})

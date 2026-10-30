@@ -2,7 +2,7 @@
 
 The community subtype for the demo is a **configuration choice, still undecided**. It is data in `eventmate/data/community_profiles.json` (or the file named by `EVENTMATE_COMMUNITY_PROFILES`). Pick one key from that file, call it `<subtype>`, and use a brief containing one of that profile's keywords. Examples: `college fest` -> `college_fest`; `RWA` -> `neighbourhood_gathering`; `fundraiser` -> `fundraiser`. Nothing in the code depends on which you pick.
 
-Setup: `python -m eventmate.web`, open http://127.0.0.1:8765. Mail is the fake world used by the tests (`eventmate/tests/mailfake.py`) or a dedicated test mailbox you control (see `EMAIL_SETUP.md`). No real vendors.
+Setup: `python -m eventmate.web`, open http://127.0.0.1:8765. Mail is the fake world used by the tests (`tests/mailfake.py`) or a dedicated test mailbox you control (see `EMAIL_SETUP.md`). No real vendors.
 
 ## 1. Brief to plan (1 min)
 In the chat box type: `We want the <keyword for your subtype>, 150 people in Pune on Dec 12, budget 2.5 lakh, venue and catering.`
@@ -24,4 +24,4 @@ Enter validity (10 days is pre-filled because the vendor wrote it) and confirm: 
 Optional: turn on the owner email copy; show the exact summary before confirming.
 
 ## Paired regression run (30 s)
-Run a wedding: `Plan a 120-person wedding in Pune on December 12 under INR 500,000. Venue and catering.` There is no Community tab, no community checks, and the plan, Ideas and quotes flow work as before. `python -m pytest eventmate/tests` (1499 passed on Python 3.14.8 with solvers and Chromium).
+Run a wedding: `Plan a 120-person wedding in Pune on December 12 under INR 500,000. Venue and catering.` There is no Community tab, no community checks, and the plan, Ideas and quotes flow work as before. `python -m pytest tests` (1499 passed on Python 3.14.8 with solvers and Chromium).

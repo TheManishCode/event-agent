@@ -44,7 +44,7 @@ These rules bind every human or AI contributor to `eventmate/`.
 
 1. Restate the feature. 2. List affected files and functions. 3. Propose the
 smallest safe implementation. 4. Write or update tests first. 5. Implement.
-6. Run tests (`python -m pytest eventmate/tests`). 7. Run one end-to-end
+6. Run tests (`python -m pytest tests`). 7. Run one end-to-end
 example (`python -m eventmate "<request>"`). 8. Report test results, files
 changed, assumptions and next steps.
 
@@ -58,7 +58,7 @@ changed, assumptions and next steps.
 - **Every new input surface gets an adversarial test** (malformed, boundary, hostile text, concurrency), and every bug found gets a regression test.
 - **UI**: no `innerHTML`, no inline script/style (strict CSP), no third-party origins; test the real browser flow, including form validation.
 
-## Memory files (mandatory, enforced by `eventmate/tests/test_memory_files.py`)
+## Memory files (mandatory, enforced by `tests/test_memory_files.py`)
 
 `docs/HANDOFF.md` and `docs/DECISIONS.md` are part of the deliverable, not paperwork.
 

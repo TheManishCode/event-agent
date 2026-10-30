@@ -70,7 +70,7 @@ def diff_plans(old: PlanVersion, new: PlanVersion) -> PlanDiff:
     for key, a, b in req(old.request, new.request):
         (preserved if a == b else changed).append(DiffItem(kind="request", key=key, before=a, after=b))
     if old.request.community is not None or new.request.community is not None:
-        from eventmate.community import summary
+        from eventmate.planning.community import summary
 
         a, b = summary(old.request.community), summary(new.request.community)
         (preserved if a == b else changed).append(DiffItem(kind="request", key="community_details", before=a, after=b))
