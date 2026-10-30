@@ -18,12 +18,3 @@ cp .env.example .env && chmod 600 .env     # keys and mailbox settings; .env is 
 python -m eventmate.web                    # UI on http://127.0.0.1:8765
 python -m pytest eventmate/tests           # the test suite
 ```
-
-Planning also runs a symbolic (PDDL) cross-check with Fast Downward and VAL, which come from the research repository this grew out of
-([EmanueleLM/MultiAgentPlanning](https://github.com/EmanueleLM/MultiAgentPlanning); build them with its `bootstrap.py`). Point EventMate at them with
-`EVENTMATE_FD=/path/to/fast-downward.py` and `EVENTMATE_VAL=/path/to/Validate`. Without them planning refuses by default (the validator never reports a false
-pass); the CLI's `--allow-no-symbolic` skips only that check and says so. With them, all 1168 tests pass; without them, most planning tests fail.
-Vendor messaging needs your own mailbox (SMTP/IMAP) and/or a self-hosted WAHA WhatsApp gateway; see `.env.example`
-and ADR-042 in `docs/DECISIONS.md`. WAHA is not the official WhatsApp API, so use a number you can afford to have restricted.
-
-No licence has been chosen yet; until one is added, all rights are reserved.

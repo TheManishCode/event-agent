@@ -28,7 +28,7 @@ agent layer around it.
 
 EventMate can write to your vendors and read their replies (ADR-042). Every message is a proposal you approve (the exact text, bound to a hash); the agent then sends it through **your own** mailbox
 (SMTP/IMAP) or a self-hosted [WAHA](https://github.com/devlikeapro/waha) WhatsApp gateway, and shows what comes back in the **Vendor chats** tab. Replies are shown as the vendor's own words with the
-amounts and questions quoted; nothing becomes a quote until you record it. Settings are in `.env.example`. WAHA is not the official WhatsApp API, so use a number you can afford to have restricted.
+amounts and questions quoted; nothing becomes a quote until you record it. Settings are in `.env.example`.
 `python -m eventmate inbox show|poll|approve|deny` does the same from the terminal.
 
 ## Quick start
