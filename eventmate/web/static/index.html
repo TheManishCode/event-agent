@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EventMate: validated, explainable event plans</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <a class="skip" href="#stage">Skip to plan</a>
+  <header class="topbar">
+    <div class="brand"><img src="/static/favicon.svg" alt="" width="30" height="30"><span>EventMate</span><small>every plan validated, every decision explained</small></div>
+    <div class="top-actions">
+      <label class="sr" for="version-select">Plan version</label>
+      <select id="version-select" class="select" hidden></select>
+      <button id="explore-open" class="btn" type="button">Explore deals and trips</button>
+      <button id="theme-toggle" class="btn ghost" type="button" aria-label="Toggle light or dark theme">Theme</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="rail" aria-label="Create and choose plans">
+      <section class="card chat-card" id="chat-card">
+        <h2>Plan with EventMate</h2>
+        <div id="chat-log" class="chat-log" role="log" aria-live="polite" aria-label="Conversation"></div>
+        <div id="review" class="review" hidden></div>
+        <form id="chat-form" class="chat-form" autocomplete="off">
+          <label class="sr" for="chat-input">Tell EventMate about your event</label>
+          <input id="chat-input" class="input" type="text" maxlength="2000" placeholder="Tell me about the event, in your own words">
+          <button class="btn primary" id="chat-send" type="submit">Send</button>
+        </form>
+        <div class="chips" id="chat-examples" aria-label="Examples"></div>
+        <details class="classic">
+          <summary>Write it as one block instead</summary>
+          <form id="plan-form" autocomplete="off">
+            <label class="sr" for="request-text">Describe the event</label>
+            <textarea id="request-text" class="input" rows="6" maxlength="2000" placeholder="Plan a 120-person engagement party in Pune on December 12 under INR 200,000. Vegetarian catering, indoor venue, photographer, and reminders for invitations and vendor confirmation."></textarea>
+            <div class="chips" id="examples" aria-label="Examples"></div>
+            <label class="field-label" for="guest-list">Guest list</label>
+            <select id="guest-list" class="select"><option value="">None (use the stated guest count)</option></select>
+            <button class="btn primary wide" id="plan-button" type="submit">Build validated plan</button>
+          </form>
+        </details>
+        <div id="plan-errors" class="notice err" role="alert" hidden></div>
+      </section>
+      <section class="card">
+        <h2>Your plans</h2>
+        <ul id="plan-list" class="plan-list"></ul>
+        <p id="plan-list-empty" class="muted">No plans yet.</p>
+      </section>
+      <p class="fineprint">Nothing is booked, paid or emailed. Prices and availability come from the vendor database; confirmations are what you tell us.</p>
+    </aside>
+
+    <section class="stage" id="stage" tabindex="-1">
+      <div id="empty-state" class="empty">
+        <img src="/static/favicon.svg" alt="" width="64" height="64">
+        <h1>Plan an event you can trust</h1>
+        <p>Describe it in plain words. EventMate checks vendors against real records, schedules with a solver, verifies feasibility symbolically, and shows why, with alternatives.</p>
+      </div>
+      <div id="explore-view" hidden></div>
+      <div id="plan-view" hidden>
+        <div class="hero card" id="hero"></div>
+        <nav class="tabs" role="tablist" aria-label="Plan sections" id="tabs"></nav>
+        <div id="panels"></div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="replan-dialog" class="dialog" aria-labelledby="replan-title">
+    <form method="dialog" id="replan-form">
+      <h2 id="replan-title">Something changed</h2>
+      <fieldset class="seg" id="kind-group"><legend class="sr">Kind of change</legend></fieldset>
+      <div id="kind-fields"></div>
+      <div id="override-box" class="notice" hidden></div>
+      <div id="replan-result" role="status"></div>
+      <div class="dialog-actions">
+        <button class="btn ghost" value="cancel" id="replan-close" type="button">Close</button>
+        <button class="btn primary" id="replan-submit" type="submit">Replan</button>
+      </div>
+    </form>
+  </dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

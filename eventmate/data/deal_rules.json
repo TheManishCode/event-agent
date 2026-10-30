@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "reviewed": false,
+  "source": "EventMate draft. Plausible price bounds and query templates for Indian events; not reviewed by industry practitioners. Bounds only discard obviously wrong numbers.",
+  "bounds": {
+    "per_plate": [
+      100,
+      20000
+    ],
+    "per_day": [
+      3000,
+      2000000
+    ],
+    "per_hour": [
+      500,
+      200000
+    ],
+    "per_event": [
+      3000,
+      30000000
+    ],
+    "per_night": [
+      500,
+      500000
+    ]
+  },
+  "kinds": {
+    "caterer": {
+      "queries": [
+        "wedding caterer in {city} price per plate",
+        "{city} catering cost per plate buffet",
+        "best catering packages {city} rates"
+      ],
+      "units": {
+        "per_plate": "per_plate",
+        "per_person": "per_plate"
+      },
+      "default_unit": null,
+      "keywords": [
+        "plate",
+        "cater",
+        "buffet",
+        "menu",
+        "meal",
+        "veg",
+        "thali",
+        "per head",
+        "per guest"
+      ]
+    },
+    "venue": {
+      "queries": [
+        "banquet hall in {city} wedding venue price",
+        "{city} wedding venue rental cost",
+        "best event venues {city} rates per day"
+      ],
+      "units": {
+        "per_event": "per_event",
+        "per_day": "per_day"
+      },
+      "default_unit": "per_event",
+      "keywords": [
+        "venue",
+        "hall",
+        "banquet",
+        "lawn",
+        "resort",
+        "hotel",
+        "farm",
+        "ground",
+        "per day",
+        "rental",
+        "booking",
+        "palace",
+        "club"
+      ],
+      "bounds": {
+        "per_event": [
+          15000,
+          30000000
+        ],
+        "per_day": [
+          10000,
+          2000000
+        ]
+      }
+    },
+    "photographer": {
+      "queries": [
+        "wedding photographer in {city} price",
+        "{city} event photography packages cost",
+        "best wedding photographers {city} rates"
+      ],
+      "units": {
+        "per_event": "per_event",
+        "per_day": "per_day",
+        "per_hour": "per_hour"
+      },
+      "default_unit": "per_event",
+      "keywords": [
+        "photo",
+        "shoot",
+        "album",
+        "candid",
+        "video",
+        "cinemat",
+        "pre-wedding",
+        "pre wedding",
+        "drone",
+        "coverage"
+      ],
+      "bounds": {
+        "per_event": [
+          5000,
+          5000000
+        ],
+        "per_day": [
+          5000,
+          500000
+        ],
+        "per_hour": [
+          500,
+          50000
+        ]
+      }
+    },
+    "hotel": {
+      "queries": [
+        "hotels in {city} price per night",
+        "{city} hotel room rates per night",
+        "best hotel deals {city} rooms"
+      ],
+      "units": {
+        "per_night": "per_night"
+      },
+      "default_unit": null,
+      "keywords": [
+        "hotel",
+        "room",
+        "resort",
+        "suite",
+        "stay",
+        "inn",
+        "lodge",
+        "night",
+        "villa"
+      ]
+    }
+  },
+  "note": "Per-service bounds override the global ones. A row is kept only if its label, snippet or page title mentions one of the service's keywords."
+}

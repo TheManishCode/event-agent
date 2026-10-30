@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "reviewed": false,
+  "source": "EventMate draft, general public knowledge about Indian event vendors; not reviewed by industry practitioners",
+  "checklists": {
+    "venue": ["tables and chairs", "power backup", "cleaning", "parking", "sound system", "air conditioning"],
+    "caterer": ["service staff", "crockery and cutlery", "serving counters", "taxes", "transport"],
+    "photographer": ["edited photos", "raw files", "travel", "album", "extra hours"]
+  }
+}

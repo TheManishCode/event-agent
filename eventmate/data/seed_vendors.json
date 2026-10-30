@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "note": "Synthetic seed data for development. Not real businesses or prices.",
+  "records": [
+    {"id": "cat-pune-annapurna", "name": "Annapurna Caterers", "category": "caterer", "city": "Pune", "price_per_plate": 650, "min_guests": 50, "max_guests": 400, "dietary_options": ["vegetarian", "jain"], "rating": 4.6, "available_dates": ["2026-12-12"], "booking_status": "available", "source": "database:seed_vendors.json"},
+    {"id": "cat-pune-rasoi", "name": "Royal Rasoi", "category": "caterer", "city": "Pune", "price_per_plate": 550, "min_guests": 100, "max_guests": 500, "dietary_options": ["vegetarian", "non_vegetarian"], "rating": 4.2, "available_dates": ["2026-12-12"], "booking_status": "available", "source": "database:seed_vendors.json"},
+    {"id": "cat-pune-spice", "name": "Spice Route", "category": "caterer", "city": "Pune", "price_per_plate": 700, "min_guests": 50, "max_guests": 300, "dietary_options": ["vegetarian", "non_vegetarian", "vegan"], "rating": 4.7, "available_dates": ["2026-12-12"], "booking_status": "available", "source": "database:seed_vendors.json"},
+    {"id": "cat-pune-darbar", "name": "Mughlai Darbar", "category": "caterer", "city": "Pune", "price_per_plate": 800, "min_guests": 50, "max_guests": 300, "dietary_options": ["non_vegetarian", "halal"], "rating": 4.5, "available_dates": ["2026-12-12"], "booking_status": "available", "source": "database:seed_vendors.json"},
+    {"id": "cat-pune-tiffins", "name": "Tiny Tiffins", "category": "caterer", "city": "Pune", "price_per_plate": 600, "min_guests": 10, "max_guests": 60, "dietary_options": ["vegetarian"], "rating": 4.0, "available_dates": ["2026-12-12"], "booking_status": "available", "source": "database:seed_vendors.json"},
+    {"id": "cat-pune-saffron", "name": "Saffron Feast", "category": "caterer", "city": "Pune", "price_per_plate": 620, "min_guests": 50, "max_guests": 250, "dietary_options": ["vegetarian", "vegan", "jain"], "rating": 4.4, "available_dates": ["2026-12-20"], "booking_status": "available", "source": "database:seed_vendors.json"},
+    {"id": "cat-mum-marine", "name": "Marine Caterers", "category": "caterer", "city": "Mumbai", "price_per_plate": 640, "min_guests": 50, "max_guests": 400, "dietary_options": ["vegetarian"], "rating": 4.3, "available_dates": ["2026-12-12"], "booking_status": "available", "source": "database:seed_vendors.json"},
+    {"id": "pho-pune-candid", "name": "Candid Frames", "category": "photographer", "city": "Pune", "flat_fee": 22000, "rating": 4.6, "available_dates": ["2026-12-12"], "booking_status": "available", "source": "database:seed_vendors.json"},
+    {"id": "pho-pune-lens", "name": "LensCraft Studio", "category": "photographer", "city": "Pune", "flat_fee": 18000, "rating": 4.1, "available_dates": ["2026-12-12"], "booking_status": "available", "source": "database:seed_vendors.json"},
+    {"id": "pho-pune-cinema", "name": "Cinematic Co", "category": "photographer", "city": "Pune", "flat_fee": 45000, "rating": 4.9, "available_dates": ["2026-12-12"], "booking_status": "available", "source": "database:seed_vendors.json"},
+    {"id": "pho-pune-moments", "name": "Moments Hub", "category": "photographer", "city": "Pune", "flat_fee": 20000, "rating": 4.3, "available_dates": ["2026-11-28"], "booking_status": "available", "source": "database:seed_vendors.json"},
+    {"id": "pho-mum-shutter", "name": "Shutter Tales", "category": "photographer", "city": "Mumbai", "flat_fee": 21000, "rating": 4.4, "available_dates": ["2026-12-12"], "booking_status": "available", "source": "database:seed_vendors.json"}
+  ]
+}

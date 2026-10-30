@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "note": "Synthetic seed data for development. Not real businesses or prices.",
+  "records": [
+    {"id": "ven-pune-heritage", "name": "Heritage Hall", "city": "Pune", "setting": "indoor", "capacity": 150, "flat_fee": 65000, "rating": 4.5, "available_dates": ["2026-12-12", "2026-12-19"], "booking_status": "available", "source": "database:seed_venues.json"},
+    {"id": "ven-pune-orchid", "name": "Orchid Banquet", "city": "Pune", "setting": "indoor", "capacity": 140, "flat_fee": 55000, "rating": 4.1, "available_dates": ["2026-12-12"], "booking_status": "available", "source": "database:seed_venues.json"},
+    {"id": "ven-pune-skyline", "name": "Skyline Banquet", "city": "Pune", "setting": "indoor", "capacity": 200, "flat_fee": 90000, "rating": 4.8, "available_dates": ["2026-12-12"], "booking_status": "available", "source": "database:seed_venues.json"},
+    {"id": "ven-pune-lawns", "name": "Lakeside Lawns", "city": "Pune", "setting": "outdoor", "capacity": 300, "flat_fee": 50000, "rating": 4.3, "available_dates": ["2026-12-12"], "booking_status": "available", "source": "database:seed_venues.json"},
+    {"id": "ven-pune-loft", "name": "Cozy Loft", "city": "Pune", "setting": "indoor", "capacity": 80, "flat_fee": 30000, "rating": 4.0, "available_dates": ["2026-12-12"], "booking_status": "available", "source": "database:seed_venues.json"},
+    {"id": "ven-pune-riverside", "name": "Riverside Hall", "city": "Pune", "setting": "indoor", "capacity": 160, "flat_fee": 60000, "rating": 4.4, "available_dates": ["2026-12-05", "2026-12-26"], "booking_status": "available", "source": "database:seed_venues.json"},
+    {"id": "ven-pune-mahal", "name": "Grand Mahal", "city": "Pune", "setting": "indoor", "capacity": 180, "flat_fee": 68000, "rating": 4.6, "available_dates": ["2026-12-12"], "booking_status": "cancelled", "source": "database:seed_venues.json"},
+    {"id": "ven-mum-bay", "name": "Bay Pavilion", "city": "Mumbai", "setting": "indoor", "capacity": 200, "flat_fee": 70000, "rating": 4.7, "available_dates": ["2026-12-12"], "booking_status": "available", "source": "database:seed_venues.json"}
+  ]
+}

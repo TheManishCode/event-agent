@@ -1,0 +1,9 @@
+{
+  "prompt_id": "assistant.system",
+  "version": 1,
+  "sha256": "bbad78bcd6c0535d8b3de8ead4f3d05985d1a17be2580619c7577cb807bc1e85",
+  "static_evals": "passed",
+  "behavioral": {
+    "status": "not_run"
+  }
+}

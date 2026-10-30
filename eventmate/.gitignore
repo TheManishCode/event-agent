@@ -1,0 +1,5 @@
+# Generated at runtime. Logs and plans can contain user request data: never commit them.
+logs/*
+plans/*
+!logs/.gitkeep
+!plans/.gitkeep

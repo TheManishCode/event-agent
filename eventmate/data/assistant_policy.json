@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "note": "Owned by the organisation. Edit the lists, not the code. blocked_names are competitors the assistant must never name; they are checked on every answer in addition to the rule that an answer may only name things found in tool results.",
+  "blocked_names": [
+    "WedMeGood",
+    "Weddingz",
+    "WeddingWire",
+    "Zola",
+    "The Knot",
+    "Eventbrite",
+    "Cvent"
+  ],
+  "blocked_phrases": [
+    "guaranteed",
+    "100% safe",
+    "legal advice"
+  ],
+  "retries": 2,
+  "backoff_seconds": 0.2,
+  "max_est_tokens_per_user_per_hour": 40000,
+  "blocked_input_phrases": [
+    "system prompt",
+    "jailbreak",
+    "developer mode"
+  ],
+  "preset_reply": "I can help with questions about this event plan and how EventMate works. I can't help with that request.",
+  "min_retrieval_score": 1.0
+}

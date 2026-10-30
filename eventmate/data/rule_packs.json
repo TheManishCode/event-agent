@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "packs": [
+    {
+      "id": "diet-jain", "diet": "jain", "version": 1, "reviewed": false,
+      "source": "EventMate draft, general public knowledge about Jain food practice; not reviewed by members of the community",
+      "items": [
+        {"title": "Confirm a Jain-compliant kitchen", "detail": "Ask the caterer to confirm in writing that Jain dishes use no onion, garlic or root vegetables."},
+        {"title": "Ask about separate preparation and service", "detail": "Ask whether Jain dishes are cooked and served with separate utensils and a separate counter."},
+        {"title": "Confirm meal timing with the host family", "detail": "Some Jain families prefer meals to finish before sunset; confirm the serving time with the host family."}
+      ]
+    },
+    {
+      "id": "diet-halal", "diet": "halal", "version": 1, "reviewed": false,
+      "source": "EventMate draft, general public knowledge about halal catering; not reviewed by members of the community",
+      "items": [
+        {"title": "Ask for halal certification or the meat source", "detail": "Ask the caterer for a halal certificate or the name of the halal-certified supplier."},
+        {"title": "Confirm cooking ingredients with the host", "detail": "Confirm with the host whether alcohol-based ingredients or flavourings must be excluded from the menu."}
+      ]
+    },
+    {
+      "id": "diet-vegan", "diet": "vegan", "version": 1, "reviewed": false,
+      "source": "EventMate draft, general public knowledge about vegan catering; not reviewed by a nutrition professional",
+      "items": [
+        {"title": "Check for hidden animal products", "detail": "Ask for an ingredient list: ghee, paneer, curd, cream, honey and gelatine are common in Indian menus and desserts."}
+      ]
+    },
+    {
+      "id": "diet-vegetarian", "diet": "vegetarian", "version": 1, "reviewed": false,
+      "source": "EventMate draft, general public knowledge about vegetarian catering; not reviewed by a nutrition professional",
+      "items": [
+        {"title": "Confirm separate vessels and no egg or gelatine", "detail": "Ask whether vegetarian dishes are prepared in separate vessels and whether desserts contain egg or gelatine."}
+      ]
+    },
+    {
+      "id": "diet-gluten-free", "diet": "gluten_free", "version": 1, "reviewed": false,
+      "source": "EventMate draft, general public knowledge about gluten-free catering; not reviewed by a nutrition professional",
+      "items": [
+        {"title": "Ask about cross-contamination", "detail": "Ask whether gluten-free dishes share a kitchen, fryer or serving spoons with wheat, maida or semolina dishes, and whether sauces contain wheat."}
+      ]
+    }
+  ]
+}

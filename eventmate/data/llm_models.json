@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "note": "Model ids come from the providers' catalogs, but a catalog entry is not proof it is served: on 2026-10-30 several listed NVIDIA models answered 404 or timed out, so the defaults below were each run once with a real key. gpt-oss-20b with reasoning_effort low answers the routing prompt in about 3-10 s; the big Nemotron reasons at length and is kept for heavy work. ':free' OpenRouter models cost no credits but are rate-limited and have not been run yet. Override with EVENTMATE_NVIDIA_MODEL, EVENTMATE_NVIDIA_MODEL_LIGHT, EVENTMATE_OPENROUTER_MODEL_HEAVY, EVENTMATE_OPENROUTER_MODEL_LIGHT.",
+  "nvidia": {
+    "base_url": "https://integrate.api.nvidia.com/v1",
+    "model": "nvidia/nemotron-3-ultra-550b-a55b",
+    "timeout": 90,
+    "light": {
+      "model": "openai/gpt-oss-20b",
+      "extra": {
+        "reasoning_effort": "low"
+      },
+      "timeout": 30
+    }
+  },
+  "openrouter": {
+    "base_url": "https://openrouter.ai/api/v1",
+    "heavy": "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "light": "google/gemma-4-31b-it:free"
+  }
+}

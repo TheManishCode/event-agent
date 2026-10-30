@@ -1,0 +1,138 @@
+{
+  "schema_version": 1,
+  "note": "Synthetic guest lists for development. Names are fictional.",
+  "records": [
+    {
+      "list_id": "demo-engagement-120",
+      "source": "database:seed_guests.json",
+      "guests": [
+        {
+          "id": "g01",
+          "name": "Asha Kulkarni",
+          "rsvp": "yes",
+          "party_size": 3,
+          "dietary": [
+            "vegetarian"
+          ]
+        },
+        {
+          "id": "g02",
+          "name": "Rohan Deshpande",
+          "rsvp": "yes",
+          "party_size": 2,
+          "dietary": [
+            "vegetarian",
+            "jain"
+          ]
+        },
+        {
+          "id": "g03",
+          "name": "Meera Joshi",
+          "rsvp": "yes",
+          "party_size": 1,
+          "dietary": [
+            "vegetarian"
+          ]
+        },
+        {
+          "id": "g04",
+          "name": "Vikram Patil",
+          "rsvp": "no",
+          "party_size": 4,
+          "dietary": []
+        },
+        {
+          "id": "g05",
+          "name": "Sara Khan",
+          "rsvp": "pending",
+          "party_size": 2,
+          "dietary": [
+            "vegetarian"
+          ]
+        },
+        {
+          "id": "g06",
+          "name": "Nikhil Rao",
+          "rsvp": "yes",
+          "party_size": 5,
+          "dietary": [
+            "vegetarian"
+          ]
+        },
+        {
+          "id": "g07",
+          "name": "Priya Nair",
+          "rsvp": "pending",
+          "party_size": 2,
+          "dietary": [
+            "jain"
+          ]
+        },
+        {
+          "id": "g08",
+          "name": "Aditya Shah",
+          "rsvp": "yes",
+          "party_size": 2,
+          "dietary": [
+            "vegetarian"
+          ]
+        }
+      ]
+    },
+    {
+      "list_id": "demo-overbooked",
+      "source": "database:seed_guests.json",
+      "guests": [
+        {
+          "id": "o01",
+          "name": "Test Guest 1",
+          "rsvp": "yes",
+          "party_size": 20,
+          "dietary": []
+        },
+        {
+          "id": "o02",
+          "name": "Test Guest 2",
+          "rsvp": "yes",
+          "party_size": 20,
+          "dietary": []
+        },
+        {
+          "id": "o03",
+          "name": "Test Guest 3",
+          "rsvp": "yes",
+          "party_size": 20,
+          "dietary": []
+        },
+        {
+          "id": "o04",
+          "name": "Test Guest 4",
+          "rsvp": "yes",
+          "party_size": 20,
+          "dietary": []
+        },
+        {
+          "id": "o05",
+          "name": "Test Guest 5",
+          "rsvp": "yes",
+          "party_size": 20,
+          "dietary": []
+        },
+        {
+          "id": "o06",
+          "name": "Test Guest 6",
+          "rsvp": "yes",
+          "party_size": 20,
+          "dietary": []
+        },
+        {
+          "id": "o07",
+          "name": "Test Guest 7",
+          "rsvp": "yes",
+          "party_size": 20,
+          "dietary": []
+        }
+      ]
+    }
+  ]
+}
