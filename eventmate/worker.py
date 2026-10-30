@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from eventmate.claims import extract_claims
+from eventmate.digests import digest_text
 from eventmate.jobs import Job, JobStore, QuoteClaim, StaleJob, UserItem, VendorProgress
 from eventmate.schemas import ObservationSource, VendorCategory
 
@@ -39,6 +40,12 @@ VendorSpec = Union[Dict[str, Tuple[str, str]], Sequence[str]]
 class JobWorker:
     def __init__(self, em, store: JobStore, now: Callable[[], datetime] = _utcnow):
         self.em, self.store, self.now = em, store, now
+
+    def _persist(self, job: Job, actor: str, event: str, now: datetime, detail: Optional[dict] = None) -> Job:
+        """Save the job, and write a digest to the in-app inbox if what the owner should know has changed."""
+        saved = self.store.save(job, actor, event, now, detail)
+        self.em.digest_store.write(saved, digest_text(saved, self.em._vendor_names()))
+        return saved
 
     # ------------------------------------------------------------ creating and deciding (the user's side)
 
@@ -87,7 +94,7 @@ class JobWorker:
             if d is not None and d.status == "prepared":
                 self.em.approve_outreach(job.plan_id, d.draft_id, d.content_hash)
         items = tuple(i.model_copy(update={"resolved": True}) if i.kind == "approve_requests" else i for i in job.items)
-        return self.store.save(job.model_copy(update={"items": items, "wake_at": self.now(), "status": "active", "next_action": "sending approved requests"}), "user", "requests_approved", self.now())
+        return self._persist(job.model_copy(update={"items": items, "wake_at": self.now(), "status": "active", "next_action": "sending approved requests"}), "user", "requests_approved", self.now())
 
     def confirm_claim(self, job_id: str, claim_id: str, valid_days: int) -> Job:
         """The user's tap. This is the only place a vendor's words become a recorded quote. The vendor's reply rarely says how long a price
@@ -112,13 +119,13 @@ class JobWorker:
             for c in job.claims
         )
         items = tuple(i.model_copy(update={"resolved": True}) if (i.kind == "confirm_claim" and i.ref == claim_id) else i for i in job.items)
-        return self.store.save(job.model_copy(update={"claims": claims, "items": items, "wake_at": now}), "user", "claim_confirmed", now, {"claim": claim_id, "message": claim.message_id, "valid_days": valid_days})
+        return self._persist(job.model_copy(update={"claims": claims, "items": items, "wake_at": now}), "user", "claim_confirmed", now, {"claim": claim_id, "message": claim.message_id, "valid_days": valid_days})
 
     def reject_claim(self, job_id: str, claim_id: str) -> Job:
         job = self.store.get(job_id)
         claims = tuple(c.model_copy(update={"status": "rejected"}) if (c.claim_id == claim_id and c.status == "proposed") else c for c in job.claims)
         items = tuple(i.model_copy(update={"resolved": True}) if (i.kind == "confirm_claim" and i.ref == claim_id) else i for i in job.items)
-        return self.store.save(job.model_copy(update={"claims": claims, "items": items, "wake_at": self.now()}), "user", "claim_rejected", self.now(), {"claim": claim_id})
+        return self._persist(job.model_copy(update={"claims": claims, "items": items, "wake_at": self.now()}), "user", "claim_rejected", self.now(), {"claim": claim_id})
 
     def resolve_item(self, job_id: str, item_id: str, note: str = "") -> Job:
         """The user dealt with it outside the job (answered a vendor question, checked an unknown send)."""
@@ -126,7 +133,7 @@ class JobWorker:
         if not any(i.item_id == item_id for i in job.items):
             raise ValueError("no such item")
         items = tuple(i.model_copy(update={"resolved": True}) if i.item_id == item_id else i for i in job.items)
-        return self.store.save(job.model_copy(update={"items": items, "wake_at": self.now()}), "user", "item_resolved", self.now(), {"item": item_id, "note": note[:200]})
+        return self._persist(job.model_copy(update={"items": items, "wake_at": self.now()}), "user", "item_resolved", self.now(), {"item": item_id, "note": note[:200]})
 
     def approve_nudge(self, job_id: str, item_id: str) -> Job:
         job = self.store.get(job_id)
@@ -139,7 +146,7 @@ class JobWorker:
         vendors = dict(job.vendors)
         vendors[item.vendor_id] = vendors[item.vendor_id].model_copy(update={"nudges": vendors[item.vendor_id].nudges + 1, "asked_at": self.now(), "pending_nudge_draft_id": ""})
         items = tuple(i.model_copy(update={"resolved": True}) if i.item_id == item_id else i for i in job.items)
-        return self.store.save(job.model_copy(update={"items": items, "vendors": vendors, "wake_at": self.now()}), "user", "nudge_approved", self.now(), {"draft": item.ref})
+        return self._persist(job.model_copy(update={"items": items, "vendors": vendors, "wake_at": self.now()}), "user", "nudge_approved", self.now(), {"draft": item.ref})
 
     def _deny_queued(self, job: Job) -> None:
         """A job that ends leaves no message queued behind it: its automatic follow-ups and nudge drafts are denied."""
@@ -151,7 +158,7 @@ class JobWorker:
     def cancel(self, job_id: str) -> Job:
         job = self.store.get(job_id)
         self._deny_queued(job)
-        return self.store.save(job.model_copy(update={"status": "cancelled", "wake_at": None, "next_action": "cancelled by you"}), "user", "cancelled", self.now())
+        return self._persist(job.model_copy(update={"status": "cancelled", "wake_at": None, "next_action": "cancelled by you"}), "user", "cancelled", self.now())
 
     # ------------------------------------------------------------ the loop
 
@@ -172,6 +179,10 @@ class JobWorker:
             except Exception as exc:
                 report["errors"].append(f"{job.job_id}: {type(exc).__name__}: {str(exc)[:160]}")
         try:
+            self.em.notifier.flush()  # the optional email copy to the owner, if they turned it on; every gate is checked inside
+        except Exception as exc:
+            report["errors"].append(f"notify: {type(exc).__name__}")
+        try:
             self.em.conversations.dispatch()  # what the jobs just queued (automatic nudges) goes out now, within the limits, not a tick later
         except Exception as exc:
             report["errors"].append(f"dispatch: {type(exc).__name__}")
@@ -183,6 +194,7 @@ class JobWorker:
         claims: List[QuoteClaim] = list(job.claims)
         items: List[UserItem] = list(job.items)
         seen = set(job.seen_message_ids)
+        awaiting = list(job.answered_replies)
         events: List[str] = []
 
         def has_item(kind: str, ref: str) -> bool:
@@ -211,6 +223,12 @@ class JobWorker:
             seen.add(m.message_id)
             events.append(f"reply:{vid}")
             vendors[vid] = prog.model_copy(update={"state": "unavailable" if m.analysis.says_unavailable else "replied"})
+            if m.sender_differs:  # a reply from another address is never turned into a claim; the user reads it first
+                items.append(_item("different_sender", f"{vid}: a reply came from {m.sender}, not the address you wrote to. Read it before trusting anything in it.", vid, m.message_id))
+                continue
+            answered = any(x.action_key == f"reply:{m.message_id}" and x.status not in ("denied", "expired") for x in self.em.outreach_store.list(plan_id))  # the Mandate already asked its question
+            if answered:
+                awaiting.append(m.message_id)  # watched below: if that question never goes out, the user is told
             new_claims, problem = extract_claims(m)
             for c in new_claims:
                 for i, old in enumerate(claims):
@@ -226,8 +244,23 @@ class JobWorker:
                 items.append(_item("vendor_question", f"{vid} asks: " + " / ".join(m.analysis.questions), vid, m.message_id))
             if m.analysis.says_unavailable:
                 items.append(_item("vendor_unavailable", f"{vid} says it is not available.", vid, m.message_id))
-            if not (new_claims or problem or m.analysis.questions or m.analysis.says_unavailable):
+            if not (new_claims or problem or m.analysis.questions or m.analysis.says_unavailable or answered):
                 items.append(_item("unclear_price", f"{vid} replied without a price. Please read the reply.", vid, m.message_id))
+
+        # 2b. an automatic answer that was queued must actually go out; if it was denied, expired or failed, the reply is the user's again
+        if awaiting:
+            by_id = {x.message_id: x for x in self.em.outreach_store.inbound(plan_id)}
+            drafts = self.em.outreach_store.list(plan_id)
+            for mid in list(awaiting):
+                d = next((x for x in drafts if x.action_key == f"reply:{mid}"), None)
+                if d is not None and d.status in ("prepared", "approved", "sending"):
+                    continue  # still on its way
+                awaiting.remove(mid)
+                if d is None or d.status in ("denied", "expired", "failed", "outcome_unknown"):
+                    owner = by_id.get(mid)
+                    vid = next((v for v, x in vendors.items() if owner and x.draft_id == owner.draft_id), "")
+                    why = "no automatic answer was sent" if d is None else f"the automatic answer to them is {d.status.replace('_', ' ')}"
+                    items.append(_item("unclear_price", f"{vid} replied without a price and {why}. Please read the reply.", vid, mid))
 
         # 3. silence: an automatic nudge only through the standing permission (ADR-043), otherwise a draft for the user to approve
         window = timedelta(hours=job.reply_window_hours)
@@ -275,8 +308,8 @@ class JobWorker:
                     status, next_action = "waiting_vendor", f"waiting for {len(waiting)} vendor(s); next check {wake.isoformat(timespec='minutes')}"
                 else:
                     status, next_action, wake = "active", "re-checking", now + timedelta(minutes=job.poll_minutes)
-        new = job.model_copy(update={"vendors": vendors, "claims": tuple(claims), "items": tuple(items), "seen_message_ids": tuple(sorted(seen)), "status": status, "next_action": next_action, "wake_at": wake})
-        saved = self.store.save(new, "worker", "tick", now, {"events": events})
+        new = job.model_copy(update={"vendors": vendors, "claims": tuple(claims), "items": tuple(items), "seen_message_ids": tuple(sorted(seen)), "answered_replies": tuple(awaiting), "status": status, "next_action": next_action, "wake_at": wake})
+        saved = self._persist(new, "worker", "tick", now, {"events": events})
         if saved.status in ("done", "expired"):
             self._deny_queued(saved)
         return saved

@@ -61,8 +61,8 @@ class ExplainerAgent:
         self.llm = llm
         self.prompts = prompts or PromptStore()
 
-    def explain(self, plan: PlanVersion, diff: Optional[PlanDiff] = None) -> Explanation:
-        markdown = self._render(plan, diff)
+    def explain(self, plan: PlanVersion, diff: Optional[PlanDiff] = None, community=None) -> Explanation:
+        markdown = self._render(plan, diff, community)
         used, reason = False, None
         if self.llm is not None:
             polished, reason = self._polish(plan, markdown)
@@ -111,7 +111,7 @@ class ExplainerAgent:
 
     # ------------------------------------------------------------- render
 
-    def _render(self, plan: PlanVersion, diff: Optional[PlanDiff]) -> str:
+    def _render(self, plan: PlanVersion, diff: Optional[PlanDiff], community=None) -> str:
         r = plan.request
         out: List[str] = [
             f"# {_esc(r.event_type.value.replace('_', ' ').title())} in {_esc(r.city)} on {r.event_date.strftime('%d %b %Y')}",
@@ -150,6 +150,8 @@ class ExplainerAgent:
             out += [f"- {_when(i.start)} to {i.end.strftime('%H:%M')}: {_esc(i.name)}" + (f" ({i.resource})" if i.resource else "") for i in plan.items if i.group == group]
             out.append("")
 
+        if community is not None:
+            out += self._community_section(community)
         out += ["## Why this plan is valid", f"- {sum(c.passed for c in plan.validation.checks)} of {len(plan.validation.checks)} hard constraints re-checked independently against the database: all passed"]
         out.append(f"- Symbolic (PDDL) feasibility: {plan.symbolic.status}" + (f", {len(plan.symbolic.plan_actions)} steps" if plan.symbolic.plan_actions else ""))
         out.append("- Checked: vendor availability, city, capacity, dietary options, prices, budget, schedule dependencies, resource clashes, lead times, requested reminders")
@@ -163,6 +165,19 @@ class ExplainerAgent:
         if diff is not None:
             out += self._render_diff(diff)
         return "\n".join(out).rstrip() + "\n"
+
+    @staticmethod
+    def _community_section(c) -> List[str]:
+        """What was checked, what could not be decided, and what only the user can mark. Never says safe, compliant or approved."""
+        out = ["## Community checks", f"- {_esc(c.profile_label)} (profile v{c.profile_version}{', not reviewed by any authority' if not c.profile_reviewed else ''})"]
+        out += [f"- {'Checked and passed' if k.passed else 'FAILED'}: {_esc(k.name.replace('_', ' '))}: {_esc(k.detail)}" for k in c.checks]
+        for u in c.unverified:
+            out.append(f"- Could not be decided: {_esc(u.name.replace('_', ' '))}: {_esc(u.detail)}. To fix: {_esc(u.repair)}")
+        out.append(f"- {_esc(c.summary)}. EventMate does not verify these; each one is marked only by you.")
+        for i in c.items:
+            who = f" ({_esc(i.recorded_by)}, {i.recorded_on.isoformat()})" if i.recorded_by and i.recorded_on else ""
+            out.append(f"  - {_esc(i.title)}: {_esc(i.instruction)} [{i.status.replace('_', ' ')}{who}]")
+        return out + [""]
 
     @staticmethod
     def _render_diff(diff: PlanDiff) -> List[str]:

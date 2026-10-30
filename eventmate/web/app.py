@@ -44,7 +44,7 @@ from eventmate.env import load_env
 from eventmate.explore import ExploreError, ExploreNotConfigured, route as explore_route
 from eventmate.llm import LLMError, client_from_env
 from eventmate.plan_store import PlanIntegrityError
-from eventmate.schemas import MAX_BUDGET_INR, DealQuery, TripRequest, MAX_MULTI_CITY_LEGS, Disruption, HiddenCost, LedgerKind, ObservationSource, TradeoffOption, VendorCategory
+from eventmate.schemas import MAX_BUDGET_INR, CommunityDetails, DealQuery, TripRequest, MAX_MULTI_CITY_LEGS, Disruption, HiddenCost, LedgerKind, ObservationSource, TradeoffOption, VendorCategory
 from eventmate.discovery import DiscoveryError
 from eventmate.places import PlacesError, PlacesNotConfigured
 from eventmate.service import EventMate
@@ -175,6 +175,38 @@ class ConfirmClaimBody(_Strict):
 
 class ResolveItemBody(_Strict):
     note: str = Field(default="", max_length=200)
+
+
+class IdeasBody(_Strict):
+    preferences: List[str] = Field(default_factory=list, max_length=5)
+
+
+class DoneBody(_Strict):
+    done: bool
+
+
+class CommunityItemBody(_Strict):
+    status: Literal["not_verified", "confirmed_by_user", "not_applicable_by_user"]
+    by: str = Field(min_length=1, max_length=60)
+    on: date
+    note: str = Field(default="", max_length=200)
+
+
+class AccessBody(_Strict):
+    features: List[Literal["step_free_access", "accessible_toilet", "reserved_seating", "hearing_support", "accessible_parking"]] = Field(default_factory=list, max_length=5)
+    evidence_ref: str = Field(min_length=1, max_length=200)
+    entered_by: str = Field(min_length=1, max_length=80)
+
+
+class NotifyProposeBody(_Strict):
+    destination: str = Field(min_length=1, max_length=254)
+    include_vendor_names: bool = False
+    include_amounts: bool = False
+    include_raw_text: bool = False
+
+
+class NotifyConfirmBody(_Strict):
+    code: str = Field(min_length=1, max_length=128)
 
 
 class EmptyBody(_Strict):
@@ -796,6 +828,150 @@ def create_app(
         with lock:
             report = em.background_round()
         return jsonify(report if isinstance(report, dict) else {"ran": [], "errors": [], "poll": json.loads(report.model_dump_json())})
+
+    @app.get("/api/plans/<plan_id>/ideas")
+    def ideas_get(plan_id):
+        plan_id = pid(plan_id)
+        with lock:
+            em.store.latest(plan_id)
+            v = em.ideas.view(plan_id)
+        return jsonify({
+            "ideas": [json.loads(i.model_dump_json()) for i in v.visible], "dismissed": list(v.dismissed), "pinned": list(v.pinned),
+            "notes": [json.loads(n.model_dump_json()) for n in v.notes], "generated_at": v.generated_at.isoformat() if v.generated_at else None,
+            "source": v.source, "facts_used": list(v.facts_used), "notice": v.notice,
+        })
+
+    @app.post("/api/plans/<plan_id>/ideas")
+    def ideas_generate(plan_id):
+        """Personalized suggestions for this plan. Labelled as suggestions: nothing here is a verified offer or changes the plan."""
+        plan_id, b = pid(plan_id), body(IdeasBody)
+        with lock:
+            result = em.ideas.generate(em.store.latest(plan_id), b.preferences)
+        return out(result, 201)
+
+    @app.post("/api/plans/<plan_id>/ideas/<idea_id>/pin")
+    def ideas_pin(plan_id, idea_id):
+        plan_id, idea_id = pid(plan_id), pid(idea_id)
+        body(EmptyBody)
+        with lock:
+            em.store.latest(plan_id)
+            note = em.ideas.pin(plan_id, idea_id)
+        return out(note, 201)
+
+    @app.post("/api/plans/<plan_id>/ideas/<idea_id>/dismiss")
+    def ideas_dismiss(plan_id, idea_id):
+        plan_id, idea_id = pid(plan_id), pid(idea_id)
+        body(EmptyBody)
+        with lock:
+            em.store.latest(plan_id)
+            em.ideas.dismiss(plan_id, idea_id)
+        return jsonify({"dismissed": idea_id})
+
+    @app.post("/api/plans/<plan_id>/ideas/<idea_id>/restore")
+    def ideas_restore(plan_id, idea_id):
+        plan_id, idea_id = pid(plan_id), pid(idea_id)
+        body(EmptyBody)
+        with lock:
+            em.store.latest(plan_id)
+            em.ideas.restore(plan_id, idea_id)
+        return jsonify({"restored": idea_id})
+
+    @app.post("/api/plans/<plan_id>/notes/<note_id>/done")
+    def notes_done(plan_id, note_id):
+        plan_id, note_id, b = pid(plan_id), pid(note_id), body(DoneBody)
+        with lock:
+            em.store.latest(plan_id)
+            note = em.ideas.set_done(plan_id, note_id, b.done)
+        return out(note)
+
+    @app.get("/api/plans/<plan_id>/digests")
+    def digests_get(plan_id):
+        """What changed on this plan's vendor jobs and what needs you. Always kept in the app, newest first."""
+        plan_id = pid(plan_id)
+        with lock:
+            em.store.latest(plan_id)
+            items = em.digest_store.list(plan_id)
+        return jsonify([json.loads(d.model_dump_json()) for d in items])
+
+    @app.post("/api/plans/<plan_id>/digests/<digest_id>/read")
+    def digest_read(plan_id, digest_id):
+        plan_id, digest_id = pid(plan_id), pid(digest_id)
+        body(EmptyBody)
+        with lock:
+            em.store.latest(plan_id)
+            rec = em.digest_store.mark_read(plan_id, digest_id)
+        return out(rec)
+
+    @app.get("/api/notify")
+    def notify_get():
+        with lock:
+            st = em.notifier.status()
+        return out(st)
+
+    @app.post("/api/notify/propose")
+    def notify_propose():
+        """Step one of the optional email copy: the exact address and what it may contain. Nothing is sent until the owner confirms."""
+        b = body(NotifyProposeBody)
+        with lock:
+            p = em.notifier.propose(b.destination, b.include_vendor_names, b.include_amounts, b.include_raw_text)
+        return out(p, 201)
+
+    @app.post("/api/notify/confirm")
+    def notify_confirm():
+        b = body(NotifyConfirmBody)
+        with lock:
+            st = em.notifier.confirm(b.code)
+        return out(st)
+
+    @app.post("/api/notify/disable")
+    def notify_disable():
+        body(EmptyBody)
+        with lock:
+            st = em.notifier.disable()
+        return out(st)
+
+    @app.get("/api/community/profiles")
+    def community_profiles():
+        """The community subtypes (data in community_profiles.json) for the intake review card."""
+        from eventmate.community import load_profiles
+
+        p = load_profiles()
+        return jsonify({"default": p.default, "version": p.version, "reviewed": p.reviewed, "profiles": [{"key": k, "label": v.label} for k, v in p.profiles.items()]})
+
+    @app.get("/api/plans/<plan_id>/community")
+    def community_get(plan_id):
+        plan_id = pid(plan_id)
+        with lock:
+            status = em.community_status(plan_id, today_fn())
+            details = em.store.latest(plan_id).request.community
+        return jsonify({**json.loads(status.model_dump_json()), "details": json.loads(details.model_dump_json()) if details else None,
+                        "suggested_roles": [{"role": r, "note": n} for r, n in status.suggested_roles]})
+
+    @app.post("/api/plans/<plan_id>/community")
+    def community_update(plan_id):
+        """Replace the community details as a validated new version, or refuse with repairs. Nothing is saved on a refusal."""
+        plan_id, details = pid(plan_id), body(CommunityDetails)
+        with lock:
+            res = em.update_community(plan_id, details, today_fn())
+        return out(res, 200 if res.status == "replanned" else (409 if res.status == "needs_decision" else 422))
+
+    @app.post("/api/plans/<plan_id>/community/items/<item_id>")
+    def community_item(plan_id, item_id):
+        """The user's mark on one conditional requirement. EventMate never marks one itself."""
+        plan_id, b = pid(plan_id), body(CommunityItemBody)
+        if not re.fullmatch(r"[a-z0-9_]{1,40}", item_id):
+            raise ValueError("invalid item id")
+        with lock:
+            rec = em.set_community_item(plan_id, item_id, b.status, b.by, b.on, b.note, today_fn())
+        return out(rec, 201)
+
+    @app.post("/api/venues/<venue_id>/accessibility")
+    def venue_accessibility(venue_id):
+        """What a venue told the user about its access, with evidence. It turns an unverified item into a pass or a failure on the next check."""
+        venue_id, b = pid(venue_id), body(AccessBody)
+        with lock:
+            rec = em.record_venue_accessibility(venue_id, tuple(b.features), b.evidence_ref, b.entered_by)
+        return out(rec, 201)
 
     @app.get("/api/contacts")
     def contacts_get():

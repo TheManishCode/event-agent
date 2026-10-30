@@ -39,6 +39,7 @@ class EventType(str, Enum):
     BIRTHDAY = "birthday"
     CORPORATE = "corporate"
     CONFERENCE = "conference"
+    COMMUNITY = "community"
     OTHER = "other"
 
 
@@ -85,6 +86,7 @@ class AgentName(str, Enum):
     VALIDATOR = "validator"
     EXPLAINER = "explainer"
     REPLANNER = "replanner"
+    IDEAS = "ideas"
 
 
 class TaskKind(str, Enum):
@@ -129,6 +131,166 @@ class CapWeight(_Model):
     weight: int = Field(gt=0, le=MAX_BUDGET_INR)
 
 
+# ------------------------------------------------------------- community
+# Community events (ADR-046). Three kinds of requirement are kept apart on purpose:
+#   A. hard checks the validator computes from what the user entered and from the database (these live in ``CommunityDetails``);
+#   B. conditional requirements, shown when the user's answers trigger them and only ever marked by the user (see ``community.py``);
+#   C. suggestions (ideas), which are not constraints at all.
+
+ACCESS_FEATURES = ("step_free_access", "accessible_toilet", "reserved_seating", "hearing_support", "accessible_parking")
+AccessFeature = Literal["step_free_access", "accessible_toilet", "reserved_seating", "hearing_support", "accessible_parking"]
+Phase = Literal["setup", "event", "teardown"]
+YesNoUnsure = Literal["yes", "no", "unsure"]
+FundingStatus = Literal["pledged", "committed", "received"]
+_SLUG = r"^[a-z0-9_]{1,30}$"
+MAX_FUNDING_SOURCES = 20
+MAX_VOLUNTEERS = 200
+MAX_SLOTS = 60
+MAX_SHIFTS = 400
+MAX_ACTIVITIES = 30
+
+
+def _name(v: str, limit: int = 60) -> str:
+    v = v.strip()
+    if not 1 <= len(v) <= limit:
+        raise ValueError(f"must be 1-{limit} characters")
+    if any(unicodedata.category(ch) == "Cc" for ch in v):
+        raise ValueError("control characters are not allowed")
+    return v
+
+
+class FundingSource(_Model):
+    """Money for the event. ``pledged`` is a hope, ``committed`` is the user's statement that it is promised, ``received`` is money in hand."""
+
+    label: str = Field(min_length=1, max_length=60)
+    status: FundingStatus
+    amount_inr: int = Field(gt=0, le=MAX_BUDGET_INR)
+
+    @field_validator("label")
+    @classmethod
+    def _label_ok(cls, v: str) -> str:
+        return _name(v)
+
+
+class VolunteerSlot(_Model):
+    """A role the user confirmed is needed, in one phase, with how many people. Times are minutes from the start of the phase."""
+
+    slot_id: str = Field(pattern=_SLUG)
+    role: str = Field(min_length=1, max_length=40)
+    phase: Phase
+    needed: int = Field(default=1, ge=1, le=50)
+    start_min: int = Field(default=0, ge=0)
+    end_min: Optional[int] = Field(default=None, ge=1)  # None = to the end of the phase
+
+    @field_validator("role")
+    @classmethod
+    def _role_ok(cls, v: str) -> str:
+        return _name(v)
+
+    @model_validator(mode="after")
+    def _ordered(self) -> "VolunteerSlot":
+        if self.end_min is not None and self.end_min <= self.start_min:
+            raise ValueError("a slot must end after it starts")
+        return self
+
+
+class VolunteerShift(_Model):
+    volunteer: str = Field(min_length=1, max_length=60)
+    role: str = Field(min_length=1, max_length=40)
+    phase: Phase
+    start_min: int = Field(default=0, ge=0)
+    end_min: Optional[int] = Field(default=None, ge=1)
+
+    @field_validator("volunteer", "role")
+    @classmethod
+    def _text_ok(cls, v: str) -> str:
+        return _name(v)
+
+    @model_validator(mode="after")
+    def _ordered(self) -> "VolunteerShift":
+        if self.end_min is not None and self.end_min <= self.start_min:
+            raise ValueError("a shift must end after it starts")
+        return self
+
+
+class ProgramActivity(_Model):
+    """Something on the day's programme. Activities that share a resource (a stage, a hall) cannot overlap."""
+
+    activity_id: str = Field(pattern=_SLUG)
+    title: str = Field(min_length=1, max_length=80)
+    minutes: int = Field(ge=5, le=720)
+    resource: str = Field(pattern=r"^[a-z0-9_]{1,20}$")
+    after: Optional[str] = Field(default=None, pattern=_SLUG)  # an activity that must finish first
+
+    @field_validator("title")
+    @classmethod
+    def _title_ok(cls, v: str) -> str:
+        return _name(v)
+
+
+class CommunityAnswers(_Model):
+    """The user's answers that decide which conditional requirements are shown. ``unsure`` shows them (fail closed); only ``no`` hides one."""
+
+    public_event: YesNoUnsure = "unsure"
+    third_party_premises: YesNoUnsure = "unsure"
+    amplified_sound: YesNoUnsure = "unsure"
+    sells_food: YesNoUnsure = "unsure"
+    collects_money: YesNoUnsure = "unsure"
+    large_crowd: YesNoUnsure = "unsure"
+    temporary_structures: YesNoUnsure = "unsure"
+    physical_activities: YesNoUnsure = "unsure"
+    outdoor_area: YesNoUnsure = "unsure"
+
+
+class CommunityDetails(_Model):
+    subtype: str = Field(default="other", pattern=r"^[a-z0-9_]{1,40}$")  # checked against the profile file, which is data
+    attendance_low: Optional[int] = Field(default=None, ge=1, le=MAX_GUESTS)
+    attendance_high: Optional[int] = Field(default=None, ge=1, le=MAX_GUESTS)
+    own_funds_inr: Optional[int] = Field(default=None, ge=0, le=MAX_BUDGET_INR)
+    count_committed: bool = False  # opt in: count committed (not received) money toward what the plan may spend
+    funding: Tuple[FundingSource, ...] = Field(default=(), max_length=MAX_FUNDING_SOURCES)
+    volunteers: Tuple[str, ...] = Field(default=(), max_length=MAX_VOLUNTEERS)
+    slots: Tuple[VolunteerSlot, ...] = Field(default=(), max_length=MAX_SLOTS)
+    shifts: Tuple[VolunteerShift, ...] = Field(default=(), max_length=MAX_SHIFTS)
+    setup_owner: Optional[str] = Field(default=None, max_length=60)
+    cleanup_owner: Optional[str] = Field(default=None, max_length=60)
+    program: Tuple[ProgramActivity, ...] = Field(default=(), max_length=MAX_ACTIVITIES)
+    access_needs: Tuple[AccessFeature, ...] = ()
+    answers: CommunityAnswers = CommunityAnswers()
+
+    @field_validator("volunteers", "setup_owner", "cleanup_owner")
+    @classmethod
+    def _names_ok(cls, v):
+        if v is None:
+            return v
+        return tuple(_name(x) for x in v) if isinstance(v, tuple) else _name(v)
+
+    @model_validator(mode="after")
+    def _consistent(self) -> "CommunityDetails":
+        lo, hi = self.attendance_low, self.attendance_high
+        if lo is not None and hi is not None and lo > hi:
+            raise ValueError("attendance_low is above attendance_high")
+        roster = set(self.volunteers)
+        if len(roster) != len(self.volunteers):
+            raise ValueError("volunteer names must be unique")
+        for who in (self.setup_owner, self.cleanup_owner):
+            if who is not None and who not in roster:
+                raise ValueError(f"{who!r} is not on the volunteer list")
+        unknown = sorted({s.volunteer for s in self.shifts} - roster)
+        if unknown:
+            raise ValueError(f"shifts name people who are not on the volunteer list: {unknown[:3]}")
+        for what, ids in (("slot", [s.slot_id for s in self.slots]), ("activity", [a.activity_id for a in self.program])):
+            if len(set(ids)) != len(ids):
+                raise ValueError(f"{what} ids must be unique")
+        known = {a.activity_id for a in self.program}
+        for a in self.program:
+            if a.after is not None and (a.after not in known or a.after == a.activity_id):
+                raise ValueError(f"activity {a.activity_id} comes after an activity that does not exist")
+        if len(set(self.access_needs)) != len(self.access_needs):
+            raise ValueError("access needs repeat")
+        return self
+
+
 class EventRequest(_Model):
     request_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
     raw_text: str = Field(min_length=1, max_length=2000)
@@ -148,6 +310,14 @@ class EventRequest(_Model):
     cap_weights: Tuple[CapWeight, ...] = ()
     # people who can make bookings in parallel; the capacity of the scheduler's organizer resource (ADR-020)
     organizers: int = Field(default=1, ge=1, le=MAX_ORGANIZERS)
+    # only for community events (ADR-046); everything the community hard checks compute from
+    community: Optional[CommunityDetails] = None
+
+    @property
+    def planning_attendance(self) -> int:
+        """The headcount a venue must hold: the expected guests, or the top of the user's attendance range when that is higher."""
+        high = self.community.attendance_high if self.community else None
+        return max(self.guest_count, high or 0)
 
     def with_changes(self, **changes) -> "EventRequest":
         """Copy with changes, re-running validation (``model_copy`` would skip it)."""
@@ -161,6 +331,12 @@ class EventRequest(_Model):
             raise ValueError("services contain duplicates")
         if self.cap_weights and sorted(w.category.value for w in self.cap_weights) != sorted(c.value for c in self.services):
             raise ValueError("cap_weights must name each requested service exactly once")
+        if self.community is not None:
+            if self.event_type != EventType.COMMUNITY:
+                raise ValueError("community details only apply to a community event")
+            lo, hi = self.community.attendance_low, self.community.attendance_high
+            if (lo is not None and lo > self.guest_count) or (hi is not None and hi < self.guest_count):
+                raise ValueError("the expected guest count must lie inside the attendance range")
         return self
 
 
@@ -310,6 +486,8 @@ class Venue(_Provider):
     setting: Literal["indoor", "outdoor"]
     capacity: int = Field(ge=1, le=MAX_GUESTS)
     flat_fee: int = Field(ge=0, le=MAX_BUDGET_INR)
+    # None = the record says nothing (unknown, not "none"); a tuple is what the venue declared (ADR-046)
+    accessibility: Optional[Tuple[AccessFeature, ...]] = None
 
     def cost_for(self, guest_count: int) -> int:
         return self.flat_fee
@@ -633,11 +811,20 @@ class PlanItem(_Model):
     end: datetime
 
 
+class UnverifiedItem(_Model):
+    """Something the validator could not decide from the data it has. Not a pass and not a failure: it never blocks a plan and is never shown as satisfied."""
+
+    name: str = Field(min_length=1, max_length=80)
+    detail: str = Field(min_length=1, max_length=400)
+    repair: str = Field(min_length=1, max_length=400)
+
+
 class ValidationReport(_Model):
     passed: bool
     checks: Tuple[ConstraintCheck, ...]
     violations: Tuple[ConstraintViolation, ...] = ()
     warnings: Tuple[str, ...] = ()
+    unverified: Tuple[UnverifiedItem, ...] = ()
 
     @model_validator(mode="after")
     def _passed_matches_checks(self) -> "ValidationReport":
@@ -714,6 +901,7 @@ class DisruptionKind(str, Enum):
     BUDGET_CHANGE = "budget_change"
     GUEST_COUNT_CHANGE = "guest_count_change"
     DATE_CHANGE = "date_change"
+    COMMUNITY_UPDATE = "community_update"
 
 
 class Disruption(_Model):
@@ -724,6 +912,7 @@ class Disruption(_Model):
     new_budget: Optional[int] = Field(default=None, gt=0, le=MAX_BUDGET_INR)
     new_guest_count: Optional[int] = Field(default=None, ge=1, le=MAX_GUESTS)
     new_date: Optional[date] = None
+    new_community: Optional[CommunityDetails] = None
     # Confirmed bookings are kept unless their vendor id is listed here.
     override_confirmed: Tuple[str, ...] = ()
 
@@ -734,6 +923,7 @@ class Disruption(_Model):
             DisruptionKind.BUDGET_CHANGE: ("new_budget", self.new_budget),
             DisruptionKind.GUEST_COUNT_CHANGE: ("new_guest_count", self.new_guest_count),
             DisruptionKind.DATE_CHANGE: ("new_date", self.new_date),
+            DisruptionKind.COMMUNITY_UPDATE: ("new_community", self.new_community),
         }
         for kind, (name, value) in payload.items():
             if kind == self.kind and value is None:
@@ -1575,6 +1765,7 @@ class InboundMessage(_Model):
     attachments: int = Field(default=0, ge=0, le=100)  # counted, never opened
     analysis: ReplyAnalysis = ReplyAnalysis()
     read: bool = False
+    sender_differs: bool = False  # an email reply carrying the thread's headers from an address other than the one written to: shown, never trusted or answered automatically
     auto_handled: bool = False  # the standing permission has already looked at this reply (answered it or handed it to the user)
     notice: str = "The vendor's own words, shown as text. Nothing in a reply changes a plan or records a quote until you do."
 
@@ -1664,4 +1855,235 @@ class AutoreplyStatus(_Model):
     killed: bool  # the global kill switch is on
     mandate: Optional[Mandate] = None
     sent_total: int = Field(default=0, ge=0)  # automatic messages queued or sent under this plan's permission
+
+
+# ----------------------------------------------------------------- ideas
+# Personalized suggestions (ADR-045). They are never facts: no price, no availability, no capacity, no cultural claim, and they never
+# change a validated plan. A model may propose and phrase them; templates work with the model off.
+
+IdeaKind = Literal["theme", "decor", "activity", "menu_note", "checklist_item"]
+IDEA_FIELDS = ("event_type", "guest_count", "budget_band", "dietary", "city", "venue_setting", "preferences", "community_subtype")
+IdeaField = Literal["event_type", "guest_count", "budget_band", "dietary", "city", "venue_setting", "preferences", "community_subtype"]
+
+_PRICE_WORDS = re.compile(
+    r"₹|\b(?:rs|inr|usd|eur|gbp|rupees?|dollars?|euros?)\b|\$\s?\d|\d[\d,.]*\s?(?:k|lakhs?|lacs?|crores?|cr|thousand|million)\b|\b(?:lakhs?|lacs?|crores?)\b", re.I,
+)
+_NUMBER_WORDS_IN_NOTE = re.compile(r"\b(?:hundred|thousand|million)\b", re.I)
+
+
+def mentions_price(text: str) -> bool:
+    """A currency or an amount written out. Plain counts such as "40 guests" are not prices."""
+    return bool(_PRICE_WORDS.search(text))
+
+
+class Idea(_Model):
+    idea_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    kind: IdeaKind
+    title: str = Field(min_length=1, max_length=120)
+    why: str = Field(min_length=1, max_length=300)  # which brief fields it used, in words
+    est_cost_note: str = Field(default="", max_length=200)  # text only; never a number
+    fields_used: Tuple[IdeaField, ...] = Field(min_length=1, max_length=8)
+    status: Literal["suggestion"] = "suggestion"
+    source: str = Field(pattern=r"^(llm:[A-Za-z0-9_.-]{1,60}|rule:idea_templates)$")
+
+    @field_validator("title", "why", "est_cost_note")
+    @classmethod
+    def _text_ok(cls, v: str) -> str:
+        _clean_text(v)
+        if mentions_price(v):
+            raise ValueError("an idea never states a price")
+        return v
+
+    @field_validator("est_cost_note")
+    @classmethod
+    def _note_is_words(cls, v: str) -> str:
+        if re.search(r"\d", v) or _NUMBER_WORDS_IN_NOTE.search(v):
+            raise ValueError("a cost note is words only, never a number")
+        return v
+
+
+class DroppedIdea(_Model):
+    reason: str = Field(min_length=1, max_length=160)  # "<category>: <detail>"
+    title: str = Field(default="", max_length=120)
+
+
+class IdeaSet(_Model):
+    plan_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    generated_at: datetime
+    source: str = Field(pattern=r"^(llm:[A-Za-z0-9_.-]{1,60}|rule:idea_templates)$")  # llm when any idea came from a model
+    ideas: Tuple[Idea, ...] = Field(default=(), max_length=12)
+    dropped: Tuple[DroppedIdea, ...] = Field(default=(), max_length=40)
+    facts_used: Tuple[IdeaField, ...] = ()
+    template_version: Optional[int] = None
+    prompt_version: Optional[int] = None
+    notice: str = "Suggestions, not verified offers"
+
+
+class IdeaDecision(_Model):
+    plan_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    idea_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    decision: Literal["pinned", "dismissed", "restored"]
+    decided_at: datetime
+    note_id: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,64}$")
+
+
+class PlanNote(_Model):
+    """A pinned idea as a note or checklist item. It sits beside the plan and never changes a validated constraint."""
+
+    note_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    plan_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    source_idea_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    kind: Literal["checklist_item", "note"]
+    text: str = Field(min_length=1, max_length=200)
+    done: bool = False
+    created_at: datetime
+
+    @field_validator("text")
+    @classmethod
+    def _text_ok(cls, v: str) -> str:
+        return _clean_text(v)
+
+
+class IdeaView(_Model):
+    plan_id: str
+    visible: Tuple[Idea, ...] = ()
+    dismissed: Tuple[str, ...] = ()
+    pinned: Tuple[str, ...] = ()
+    notes: Tuple[PlanNote, ...] = ()
+    generated_at: Optional[datetime] = None
+    source: Optional[str] = None
+    facts_used: Tuple[IdeaField, ...] = ()
+    notice: str = "Suggestions, not verified offers"
+
+
+class AccessRecord(_Model):
+    """What a venue told the user about its accessibility, recorded with evidence. An empty ``features`` means the venue said it has none of them."""
+
+    venue_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    features: Tuple[AccessFeature, ...] = ()
+    evidence_ref: str = Field(min_length=1, max_length=200)
+    entered_by: str = Field(min_length=1, max_length=80)
+    recorded_at: datetime
+
+    @field_validator("evidence_ref", "entered_by")
+    @classmethod
+    def _text_ok(cls, v: str) -> str:
+        return _clean_text(v.strip())
+
+
+ItemStatus = Literal["not_verified", "confirmed_by_user", "not_applicable_by_user"]
+USER_ITEM_STATUSES = ("not_verified", "confirmed_by_user", "not_applicable_by_user")
+
+
+class ChecklistRecord(_Model):
+    """The user's word about one conditional requirement. Append-only; the latest record for an item wins."""
+
+    plan_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    item_id: str = Field(pattern=r"^[a-z0-9_]{1,40}$")
+    status: ItemStatus
+    by: str = Field(min_length=1, max_length=60)
+    on: date
+    note: str = Field(default="", max_length=200)
+    recorded_at: datetime
+
+    @field_validator("by", "note")
+    @classmethod
+    def _text_ok(cls, v: str) -> str:
+        return _clean_text(v.strip())
+
+
+class ConditionalItem(_Model):
+    """A requirement the user's answers triggered. EventMate states who to check with and never states a rule; only the user can mark it."""
+
+    item_id: str
+    title: str
+    check_with: str
+    instruction: str  # "Check with <who>"
+    triggered_by: Tuple[str, ...]
+    status: ItemStatus = "not_verified"
+    recorded_by: Optional[str] = None
+    recorded_on: Optional[date] = None
+    note: str = ""
+    source: Literal["rule:community_profile"] = "rule:community_profile"
+
+
+class CommunityStatus(_Model):
+    plan_id: str
+    version: int
+    subtype: str
+    profile_label: str
+    profile_version: int
+    profile_reviewed: bool
+    items: Tuple[ConditionalItem, ...] = ()
+    not_verified: int = Field(ge=0)
+    summary: str  # "N conditional items not verified"; never says safe or compliant
+    summary_detail: str
+    unverified: Tuple[UnverifiedItem, ...] = ()
+    checks: Tuple[ConstraintCheck, ...] = ()  # the community hard checks of the plan version
+    suggested_roles: Tuple[Tuple[str, str], ...] = ()  # prompts for the user to confirm, never requirements
+
+
+# ------------------------------------------------------------- digests
+
+
+class DigestRecord(_Model):
+    """A job update for the owner, kept in the app. It is written whenever something the owner should know about changes."""
+
+    digest_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    job_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    plan_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    created_at: datetime
+    text: str = Field(min_length=1, max_length=4000)
+    content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    read: bool = False
+    emailed_at: Optional[datetime] = None  # set when the optional owner email went out, or may have (an unknown outcome is never resent)
+    email_result: str = Field(default="", max_length=20)
+
+
+class NotifyScope(_Model):
+    """What an owner email may contain. Status and counts are always included; each of these is opt-in."""
+
+    include_vendor_names: bool = False
+    include_amounts: bool = False
+    include_raw_text: bool = False  # vendor wording, quoted
+
+
+class NotifySetting(_Model):
+    """One append-only record of the owner's choice. Only the latest counts, and it is active only if its status is ``active``."""
+
+    destination: str = Field(max_length=254)
+    scope: NotifyScope
+    status: Literal["pending", "active", "disabled"]
+    code: str = Field(pattern=r"^[0-9a-f]{64}$")  # binds a confirmation to this exact destination and scope
+    proposed_at: datetime
+    confirmed_at: Optional[datetime] = None
+
+
+class NotifyStatus(_Model):
+    state: Literal["off", "pending", "on"]
+    destination: Optional[str] = None
+    include_vendor_names: bool = False
+    include_amounts: bool = False
+    include_raw_text: bool = False
+    sent_last_day: int = 0
+    per_day: int = 0
+    min_gap_minutes: int = 0
+
+
+class NotifyProposal(_Model):
+    destination: str
+    scope: NotifyScope
+    code: str
+    summary: str  # the exact words shown to the owner before they confirm
+
+
+class NotifyLogEntry(_Model):
+    """One owner-email attempt. It records that and when, never the content or the address (only a short hash of it)."""
+
+    at: datetime
+    result: Literal["sent", "failed", "unknown"]
+    destination_hash: str = Field(pattern=r"^[0-9a-f]{16}$")
+    digest_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    job_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    scope: Dict[str, bool] = {}
 

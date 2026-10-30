@@ -80,7 +80,16 @@ class VendorRepository:
         self._venues = venues
         self._vendors = vendors
         self.quotes = None  # ObservationStore, attached by EventMate (ADR-026)
+        self.access = None  # AccessibilityStore, attached by EventMate (ADR-046)
         self.clock: Callable[[], date] = date.today
+
+    def venue_access(self, venue_id: str):
+        """The accessibility features a venue has declared, or None when nothing is known. What the user recorded wins over the seed record."""
+        rec = self.access.latest(venue_id) if self.access is not None else None
+        if rec is not None:
+            return rec.features
+        venue = self.get(VendorCategory.VENUE, venue_id)
+        return getattr(venue, "accessibility", None)
 
     def _quote(self, provider: "Provider"):
         return self.quotes.pricing_quote(provider.id) if self.quotes is not None else None
@@ -142,11 +151,12 @@ def evaluate(
         ),
     ]
     if category == VendorCategory.VENUE:
+        attendance = request.planning_attendance  # the top of a community event's attendance range; the guest count for every other event
         checks.append(
             ConstraintCheck(
                 name="capacity",
-                passed=guests <= provider.capacity,
-                detail=f"{guests} guests vs capacity {provider.capacity}",
+                passed=attendance <= provider.capacity,
+                detail=f"{attendance} guests vs capacity {provider.capacity}",
             )
         )
         wanted = request.venue_setting

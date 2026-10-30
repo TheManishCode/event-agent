@@ -18,6 +18,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from pydantic import ValidationError
 
+from eventmate.community import load_profiles, match_subtype
 from eventmate.agents.budget import BudgetAgent
 from eventmate.agents.guest import GuestAgent, GuestRepository
 from eventmate.agents.vendor import VendorAgent, VendorRepository
@@ -33,6 +34,7 @@ from eventmate.schemas import (
     DecisionType,
     DietaryRequirement,
     EventRequest,
+    CommunityDetails,
     EventType,
     GuestSummary,
     IntakeResult,
@@ -319,9 +321,21 @@ def parse_request(
     if problems:
         raise RequestParseError(problems)
 
-    event_type = next((t for rx, t in _EVENT_TYPES if rx.search(text)), EventType.OTHER)
-    if event_type == EventType.OTHER:
-        assumptions.append("event type not recognised; treated as 'other'")
+    event_type = next((t for rx, t in _EVENT_TYPES if rx.search(text)), None)
+    community = None
+    if event_type is None:
+        hit = match_subtype(text)  # keywords and subtypes are data (community_profiles.json), so the demo subtype is a config choice
+        if hit is not None:
+            event_type, (subtype, keyword) = EventType.COMMUNITY, hit
+            community = CommunityDetails(subtype=subtype)
+            if "community" in keyword:
+                if subtype == load_profiles().default:
+                    assumptions.append(f"community subtype not specified; using '{subtype}'")
+            else:
+                assumptions.append(f"treated as a community event ({subtype.replace('_', ' ')}) because the text mentions '{keyword}'; check this")
+        else:
+            event_type = EventType.OTHER
+            assumptions.append("event type not recognised; treated as 'other'")
 
     wants_in, wants_out = _mentioned(_INDOOR, text), _mentioned(_OUTDOOR, text)
     if wants_in and not wants_out:
@@ -372,6 +386,7 @@ def parse_request(
             assumptions=tuple(assumptions),
             parse_confidence=round(max(0.3, 1.0 - 0.1 * len(assumptions)), 2),
             organizers=organizers,
+            community=community,
         )
     except ValidationError as exc:
         raise RequestParseError([e["msg"] for e in exc.errors()]) from exc

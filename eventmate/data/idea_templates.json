@@ -1,0 +1,1185 @@
+{
+ "schema_version": 1,
+ "version": 1,
+ "reviewed": false,
+ "source": "EventMate draft: generic party-planning suggestions. No prices, availability, venue sizes or cultural, ritual or religious claims. Not reviewed by event professionals.",
+ "event_types": {
+  "wedding": [
+   {
+    "id": "w01",
+    "kind": "theme",
+    "title": "Pick a two-colour palette and repeat it across decor, stationery and signage",
+    "fields": [
+     "event_type"
+    ],
+    "cost_note": "low: mostly a planning decision",
+    "note": "A small palette keeps everything looking planned.",
+    "tags": [
+     "elegant",
+     "minimal"
+    ]
+   },
+   {
+    "id": "w02",
+    "kind": "decor",
+    "title": "Photo wall of printed memories from the couple's journey",
+    "fields": [
+     "event_type",
+     "guest_count"
+    ],
+    "cost_note": "low to moderate, depending on print size",
+    "note": "Guests have something personal to look at while they wait.",
+    "tags": [
+     "personal",
+     "nostalgic"
+    ]
+   },
+   {
+    "id": "w03",
+    "kind": "activity",
+    "title": "A handwritten welcome note at each seat",
+    "fields": [
+     "event_type",
+     "guest_count"
+    ],
+    "cost_note": "low",
+    "note": "Personal touches scale well to a mid-sized guest list.",
+    "tags": [
+     "personal"
+    ],
+    "conditions": {
+     "min_guests": 20
+    }
+   },
+   {
+    "id": "w04",
+    "kind": "menu_note",
+    "title": "Ask the caterer about a live counter where guests build their own plate",
+    "fields": [
+     "event_type",
+     "dietary"
+    ],
+    "cost_note": "moderate: depends on the caterer's quote",
+    "note": "A build-your-own counter suits a meat-free menu.",
+    "tags": [],
+    "conditions": {
+     "dietary_any": [
+      "vegetarian",
+      "vegan",
+      "jain"
+     ]
+    }
+   },
+   {
+    "id": "w05",
+    "kind": "checklist_item",
+    "title": "Agree a rain or heat backup with the venue for any outdoor part",
+    "fields": [
+     "event_type",
+     "venue_setting"
+    ],
+    "cost_note": "unknown until the venue answers",
+    "note": "Outdoor parts need a plan for weather.",
+    "tags": [],
+    "conditions": {
+     "setting": "outdoor"
+    }
+   },
+   {
+    "id": "w06",
+    "kind": "checklist_item",
+    "title": "Ask the venue where elders can sit close to the entrance",
+    "fields": [
+     "guest_count"
+    ],
+    "cost_note": "low",
+    "note": "A bigger crowd makes comfortable seating worth planning.",
+    "tags": [],
+    "conditions": {
+     "min_guests": 80
+    }
+   },
+   {
+    "id": "w07",
+    "kind": "activity",
+    "title": "Photo prompts printed on small cards for guests to use",
+    "fields": [
+     "event_type"
+    ],
+    "cost_note": "low",
+    "note": "Gives guests something to do between formal moments.",
+    "tags": [
+     "fun"
+    ]
+   },
+   {
+    "id": "w08",
+    "kind": "decor",
+    "title": "Decor built from fabric, paper and lanterns instead of fresh flowers",
+    "fields": [
+     "event_type",
+     "budget_band"
+    ],
+    "cost_note": "low",
+    "note": "Keeps the look rich when money is limited.",
+    "tags": [
+     "rustic",
+     "budget"
+    ],
+    "conditions": {
+     "budget_bands": [
+      "tight",
+      "moderate"
+     ]
+    }
+   },
+   {
+    "id": "w09",
+    "kind": "checklist_item",
+    "title": "Name one friend or relative as the day-of contact for vendors",
+    "fields": [
+     "guest_count"
+    ],
+    "cost_note": "low",
+    "note": "One person answering vendor questions keeps the day calm.",
+    "tags": [],
+    "conditions": {
+     "min_guests": 50
+    }
+   },
+   {
+    "id": "w10",
+    "kind": "theme",
+    "title": "Garden-party feel with lanterns and low seating corners",
+    "fields": [
+     "event_type",
+     "venue_setting"
+    ],
+    "cost_note": "low to moderate, depending on rentals",
+    "note": "A relaxed look that suits an open-air setting.",
+    "tags": [
+     "rustic"
+    ],
+    "conditions": {
+     "setting": "outdoor"
+    }
+   }
+  ],
+  "engagement_party": [
+   {
+    "id": "e01",
+    "kind": "theme",
+    "title": "Soft pastel palette with one bold accent colour",
+    "fields": [
+     "event_type"
+    ],
+    "cost_note": "low: mostly a planning decision",
+    "note": "An easy look to carry through decor and stationery.",
+    "tags": [
+     "elegant"
+    ]
+   },
+   {
+    "id": "e02",
+    "kind": "decor",
+    "title": "Fairy lights along the entrance and the photo corner",
+    "fields": [
+     "event_type",
+     "guest_count"
+    ],
+    "cost_note": "low",
+    "note": "Warm lighting makes a larger room feel intimate.",
+    "tags": [
+     "warm"
+    ]
+   },
+   {
+    "id": "e03",
+    "kind": "activity",
+    "title": "A table of questions about the couple for guests to answer",
+    "fields": [
+     "event_type",
+     "guest_count"
+    ],
+    "cost_note": "low",
+    "note": "A light activity that helps guests from both families mix.",
+    "tags": [
+     "fun"
+    ],
+    "conditions": {
+     "min_guests": 15
+    }
+   },
+   {
+    "id": "e04",
+    "kind": "menu_note",
+    "title": "Ask the caterer how a meat-free menu can feel festive, for example with a live chaat counter",
+    "fields": [
+     "event_type",
+     "dietary"
+    ],
+    "cost_note": "moderate: depends on the caterer's quote",
+    "note": "A vegetarian menu benefits from one show-piece counter.",
+    "tags": [],
+    "conditions": {
+     "dietary_any": [
+      "vegetarian",
+      "vegan",
+      "jain"
+     ]
+    }
+   },
+   {
+    "id": "e05",
+    "kind": "checklist_item",
+    "title": "Confirm the order of the evening with the host so speeches stay short",
+    "fields": [
+     "event_type"
+    ],
+    "cost_note": "low",
+    "note": "A fixed running order avoids long gaps.",
+    "tags": []
+   },
+   {
+    "id": "e06",
+    "kind": "checklist_item",
+    "title": "Plan where gifts and cards will be kept safely during the evening",
+    "fields": [
+     "guest_count"
+    ],
+    "cost_note": "low",
+    "note": "More guests means more gifts to look after.",
+    "tags": [],
+    "conditions": {
+     "min_guests": 30
+    }
+   },
+   {
+    "id": "e07",
+    "kind": "decor",
+    "title": "Hand-painted name boards and table numbers",
+    "fields": [
+     "event_type"
+    ],
+    "cost_note": "low",
+    "note": "Small handmade details feel personal.",
+    "tags": [
+     "personal",
+     "rustic"
+    ]
+   },
+   {
+    "id": "e08",
+    "kind": "activity",
+    "title": "A short slideshow of the couple's photos on a loop",
+    "fields": [
+     "event_type",
+     "venue_setting"
+    ],
+    "cost_note": "low",
+    "note": "Works best where a screen can be seen clearly.",
+    "tags": [
+     "nostalgic"
+    ],
+    "conditions": {
+     "setting": "indoor"
+    }
+   },
+   {
+    "id": "e09",
+    "kind": "decor",
+    "title": "Lanterns and potted plants to soften the entrance",
+    "fields": [
+     "event_type"
+    ],
+    "cost_note": "low to moderate, depending on rentals",
+    "note": "Greenery makes an entrance welcoming.",
+    "tags": [
+     "rustic"
+    ]
+   },
+   {
+    "id": "e10",
+    "kind": "checklist_item",
+    "title": "Agree a rain or shade backup for any outdoor corner",
+    "fields": [
+     "event_type",
+     "venue_setting"
+    ],
+    "cost_note": "unknown until the venue answers",
+    "note": "Outdoor corners need a weather plan.",
+    "tags": [],
+    "conditions": {
+     "setting": "outdoor"
+    }
+   }
+  ],
+  "birthday": [
+   {
+    "id": "b01",
+    "kind": "theme",
+    "title": "Build the day around a favourite hobby or colour of the guest of honour",
+    "fields": [
+     "event_type"
+    ],
+    "cost_note": "low: mostly a planning decision",
+    "note": "A single idea makes decor and games feel connected.",
+    "tags": [
+     "personal"
+    ]
+   },
+   {
+    "id": "b02",
+    "kind": "activity",
+    "title": "A simple scavenger hunt around the venue",
+    "fields": [
+     "event_type",
+     "guest_count"
+    ],
+    "cost_note": "low",
+    "note": "Keeps a mid-sized group busy and mixing.",
+    "tags": [
+     "fun"
+    ],
+    "conditions": {
+     "min_guests": 10,
+     "max_guests": 80
+    }
+   },
+   {
+    "id": "b03",
+    "kind": "activity",
+    "title": "Table games and card games for the quieter guests",
+    "fields": [
+     "event_type",
+     "guest_count"
+    ],
+    "cost_note": "low",
+    "note": "Gives guests who dislike loud games a place to settle.",
+    "tags": [
+     "fun"
+    ],
+    "conditions": {
+     "min_guests": 8
+    }
+   },
+   {
+    "id": "b04",
+    "kind": "decor",
+    "title": "Balloon arch in two or three colours",
+    "fields": [
+     "event_type"
+    ],
+    "cost_note": "low",
+    "note": "A cheap decoration with a strong first impression.",
+    "tags": [
+     "fun"
+    ]
+   },
+   {
+    "id": "b05",
+    "kind": "menu_note",
+    "title": "Ask the caterer for a small dessert round so the cake does not have to do everything",
+    "fields": [
+     "event_type"
+    ],
+    "cost_note": "moderate: depends on the caterer's quote",
+    "note": "Gives guests more than one sweet moment.",
+    "tags": []
+   },
+   {
+    "id": "b06",
+    "kind": "menu_note",
+    "title": "Label dishes clearly so guests with food preferences can choose with confidence",
+    "fields": [
+     "event_type",
+     "dietary"
+    ],
+    "cost_note": "low",
+    "note": "Clear labels help when diets differ.",
+    "tags": [],
+    "conditions": {
+     "dietary_any": [
+      "vegetarian",
+      "vegan",
+      "jain",
+      "halal",
+      "gluten_free"
+     ]
+    }
+   },
+   {
+    "id": "b07",
+    "kind": "checklist_item",
+    "title": "Plan a weather-aware backup for the games if the venue is outdoors",
+    "fields": [
+     "event_type",
+     "venue_setting"
+    ],
+    "cost_note": "unknown until the venue answers",
+    "note": "Outdoor games depend on the weather.",
+    "tags": [],
+    "conditions": {
+     "setting": "outdoor"
+    }
+   },
+   {
+    "id": "b08",
+    "kind": "checklist_item",
+    "title": "Decide who cuts the cake and when, so the schedule has a fixed moment for it",
+    "fields": [
+     "event_type"
+    ],
+    "cost_note": "low",
+    "note": "A fixed cake moment keeps photos and speeches organised.",
+    "tags": []
+   },
+   {
+    "id": "b09",
+    "kind": "activity",
+    "title": "A memory jar where guests drop a note for the guest of honour",
+    "fields": [
+     "event_type",
+     "guest_count"
+    ],
+    "cost_note": "low",
+    "note": "A keepsake the guest of honour can read later.",
+    "tags": [
+     "personal"
+    ],
+    "conditions": {
+     "min_guests": 10
+    }
+   },
+   {
+    "id": "b10",
+    "kind": "decor",
+    "title": "Photo corner with a simple backdrop and props",
+    "fields": [
+     "event_type"
+    ],
+    "cost_note": "low",
+    "note": "A small corner that guests use all evening.",
+    "tags": [
+     "fun"
+    ]
+   }
+  ],
+  "corporate": [
+   {
+    "id": "c01",
+    "kind": "theme",
+    "title": "A simple brand-colour palette on name cards and signage",
+    "fields": [
+     "event_type"
+    ],
+    "cost_note": "low: mostly a planning decision",
+    "note": "Consistent colours look organised without extra spending.",
+    "tags": [
+     "minimal"
+    ]
+   },
+   {
+    "id": "c02",
+    "kind": "activity",
+    "title": "A short icebreaker round at the start so teams mix",
+    "fields": [
+     "event_type",
+     "guest_count"
+    ],
+    "cost_note": "low",
+    "note": "Helps people from different teams talk early.",
+    "tags": [
+     "fun"
+    ],
+    "conditions": {
+     "min_guests": 12
+    }
+   },
+   {
+    "id": "c03",
+    "kind": "checklist_item",
+    "title": "Share the agenda and dress code with attendees ahead of time",
+    "fields": [
+     "event_type"
+    ],
+    "cost_note": "low",
+    "note": "Fewer questions on the day.",
+    "tags": []
+   },
+   {
+    "id": "c04",
+    "kind": "menu_note",
+    "title": "Ask the caterer for a lighter lunch option so the afternoon session stays lively",
+    "fields": [
+     "event_type"
+    ],
+    "cost_note": "moderate: depends on the caterer's quote",
+    "note": "A lighter meal helps attention after lunch.",
+    "tags": []
+   },
+   {
+    "id": "c05",
+    "kind": "checklist_item",
+    "title": "Test the sound, display and internet at the venue before the day",
+    "fields": [
+     "event_type"
+    ],
+    "cost_note": "low",
+    "note": "Technical surprises cost the most time on the day.",
+    "tags": []
+   },
+   {
+    "id": "c06",
+    "kind": "activity",
+    "title": "A feedback card or quick poll at the end",
+    "fields": [
+     "event_type",
+     "guest_count"
+    ],
+    "cost_note": "low",
+    "note": "Gives the organiser real input for next time.",
+    "tags": [],
+    "conditions": {
+     "min_guests": 10
+    }
+   },
+   {
+    "id": "c07",
+    "kind": "decor",
+    "title": "Clear signage from the entrance to the room",
+    "fields": [
+     "event_type"
+    ],
+    "cost_note": "low",
+    "note": "Saves staff from answering directions all morning.",
+    "tags": []
+   },
+   {
+    "id": "c08",
+    "kind": "menu_note",
+    "title": "Mark vegetarian dishes clearly on the buffet",
+    "fields": [
+     "event_type",
+     "dietary"
+    ],
+    "cost_note": "low",
+    "note": "Clear marking helps attendees choose quickly.",
+    "tags": [],
+    "conditions": {
+     "dietary_any": [
+      "vegetarian",
+      "vegan",
+      "jain"
+     ]
+    }
+   },
+   {
+    "id": "c09",
+    "kind": "checklist_item",
+    "title": "Keep a short list of who is speaking and for how long",
+    "fields": [
+     "event_type",
+     "guest_count"
+    ],
+    "cost_note": "low",
+    "note": "A written run order keeps sessions on time.",
+    "tags": [],
+    "conditions": {
+     "min_guests": 25
+    }
+   }
+  ],
+  "conference": [
+   {
+    "id": "f01",
+    "kind": "checklist_item",
+    "title": "Set up a registration desk with printed name badges ready before doors open",
+    "fields": [
+     "event_type",
+     "guest_count"
+    ],
+    "cost_note": "low to moderate, depending on printing",
+    "note": "Badges and a desk prevent a queue at the start.",
+    "tags": [],
+    "conditions": {
+     "min_guests": 30
+    }
+   },
+   {
+    "id": "f02",
+    "kind": "theme",
+    "title": "One short theme line used on the programme, badges and signage",
+    "fields": [
+     "event_type"
+    ],
+    "cost_note": "low: mostly a planning decision",
+    "note": "A single line ties materials together.",
+    "tags": [
+     "minimal"
+    ]
+   },
+   {
+    "id": "f03",
+    "kind": "activity",
+    "title": "A networking break with a few conversation prompts on the tables",
+    "fields": [
+     "event_type",
+     "guest_count"
+    ],
+    "cost_note": "low",
+    "note": "Prompts help strangers start talking.",
+    "tags": [
+     "fun"
+    ],
+    "conditions": {
+     "min_guests": 30
+    }
+   },
+   {
+    "id": "f04",
+    "kind": "checklist_item",
+    "title": "Brief each speaker on timing, microphones and slides the day before",
+    "fields": [
+     "event_type"
+    ],
+    "cost_note": "low",
+    "note": "Fewer overruns.",
+    "tags": []
+   },
+   {
+    "id": "f05",
+    "kind": "menu_note",
+    "title": "Ask the caterer for tea and snack breaks placed between sessions",
+    "fields": [
+     "event_type"
+    ],
+    "cost_note": "moderate: depends on the caterer's quote",
+    "note": "Breaks that match the programme keep rooms full.",
+    "tags": []
+   },
+   {
+    "id": "f06",
+    "kind": "menu_note",
+    "title": "Mark vegetarian options on every food station",
+    "fields": [
+     "event_type",
+     "dietary"
+    ],
+    "cost_note": "low",
+    "note": "Clear marking speeds up service.",
+    "tags": [],
+    "conditions": {
+     "dietary_any": [
+      "vegetarian",
+      "vegan",
+      "jain"
+     ]
+    }
+   },
+   {
+    "id": "f07",
+    "kind": "checklist_item",
+    "title": "Ask the venue about step-free routes and quiet spaces and write down the answers",
+    "fields": [
+     "event_type",
+     "guest_count"
+    ],
+    "cost_note": "low",
+    "note": "Attendees often need to know before they come.",
+    "tags": [],
+    "conditions": {
+     "min_guests": 40
+    }
+   },
+   {
+    "id": "f08",
+    "kind": "activity",
+    "title": "A feedback poll shared as people leave",
+    "fields": [
+     "event_type",
+     "guest_count"
+    ],
+    "cost_note": "low",
+    "note": "Collects input while it is fresh.",
+    "tags": [],
+    "conditions": {
+     "min_guests": 20
+    }
+   }
+  ],
+  "other": [
+   {
+    "id": "o01",
+    "kind": "theme",
+    "title": "Choose one colour and one word that describe the mood of the day",
+    "fields": [
+     "event_type"
+    ],
+    "cost_note": "low: mostly a planning decision",
+    "note": "A tiny brief keeps decisions consistent.",
+    "tags": [
+     "minimal"
+    ]
+   },
+   {
+    "id": "o02",
+    "kind": "decor",
+    "title": "String lights and a simple backdrop for photos",
+    "fields": [
+     "event_type"
+    ],
+    "cost_note": "low",
+    "note": "Easy to set up and good in photographs.",
+    "tags": [
+     "warm"
+    ]
+   },
+   {
+    "id": "o03",
+    "kind": "activity",
+    "title": "One group activity near the start so people mix",
+    "fields": [
+     "event_type",
+     "guest_count"
+    ],
+    "cost_note": "low",
+    "note": "Early mixing helps the rest of the day.",
+    "tags": [
+     "fun"
+    ],
+    "conditions": {
+     "min_guests": 10
+    }
+   },
+   {
+    "id": "o04",
+    "kind": "checklist_item",
+    "title": "Write the running order on one page and share it with everyone helping",
+    "fields": [
+     "event_type"
+    ],
+    "cost_note": "low",
+    "note": "Helpers know what happens when.",
+    "tags": []
+   },
+   {
+    "id": "o05",
+    "kind": "menu_note",
+    "title": "Ask the caterer to label dishes clearly",
+    "fields": [
+     "event_type",
+     "dietary"
+    ],
+    "cost_note": "low",
+    "note": "Clear labels help guests with different diets.",
+    "tags": [],
+    "conditions": {
+     "dietary_any": [
+      "vegetarian",
+      "vegan",
+      "jain",
+      "halal",
+      "gluten_free"
+     ]
+    }
+   },
+   {
+    "id": "o06",
+    "kind": "checklist_item",
+    "title": "Plan a weather backup if any part is outdoors",
+    "fields": [
+     "event_type",
+     "venue_setting"
+    ],
+    "cost_note": "unknown until the venue answers",
+    "note": "Outdoor plans depend on the weather.",
+    "tags": [],
+    "conditions": {
+     "setting": "outdoor"
+    }
+   },
+   {
+    "id": "o07",
+    "kind": "checklist_item",
+    "title": "Choose one person to answer questions on the day",
+    "fields": [
+     "event_type",
+     "guest_count"
+    ],
+    "cost_note": "low",
+    "note": "One contact keeps things calm.",
+    "tags": [],
+    "conditions": {
+     "min_guests": 20
+    }
+   },
+   {
+    "id": "o08",
+    "kind": "activity",
+    "title": "A short thank-you moment near the end",
+    "fields": [
+     "event_type"
+    ],
+    "cost_note": "low",
+    "note": "Ends the day on a warm note.",
+    "tags": [
+     "personal"
+    ]
+   }
+  ],
+  "community": [
+   {
+    "id": "m01",
+    "kind": "checklist_item",
+    "title": "Write a one-page volunteer brief: what the day is, who does what, and who to call",
+    "fields": [
+     "event_type",
+     "guest_count"
+    ],
+    "cost_note": "low",
+    "note": "A short brief makes it easier to recruit and keep volunteers.",
+    "tags": [
+     "volunteers"
+    ]
+   },
+   {
+    "id": "m02",
+    "kind": "activity",
+    "title": "Ask each volunteer for one hour of help rather than a whole day, so more people can say yes",
+    "fields": [
+     "event_type"
+    ],
+    "cost_note": "low",
+    "note": "Shorter shifts widen the pool of helpers.",
+    "tags": [
+     "volunteers"
+    ]
+   },
+   {
+    "id": "m03",
+    "kind": "checklist_item",
+    "title": "Make a simple publicity checklist: poster, group chats, notice boards and one personal invitation each",
+    "fields": [
+     "event_type",
+     "guest_count"
+    ],
+    "cost_note": "low",
+    "note": "A checklist keeps outreach from depending on one person.",
+    "tags": [
+     "publicity"
+    ]
+   },
+   {
+    "id": "m04",
+    "kind": "theme",
+    "title": "Pick one welcoming line for the posters and the stage, in the languages your community uses",
+    "fields": [
+     "event_type"
+    ],
+    "cost_note": "low: mostly a planning decision",
+    "note": "One clear line helps everyone feel invited.",
+    "tags": [
+     "inclusive"
+    ]
+   },
+   {
+    "id": "m05",
+    "kind": "decor",
+    "title": "A single hand-painted welcome board at the entrance made by local students or members",
+    "fields": [
+     "event_type"
+    ],
+    "cost_note": "low",
+    "note": "Local hands make the entrance feel like the community's own.",
+    "tags": [
+     "personal",
+     "rustic"
+    ]
+   },
+   {
+    "id": "m06",
+    "kind": "activity",
+    "title": "A short thank-you moment for volunteers before the event closes",
+    "fields": [
+     "event_type",
+     "guest_count"
+    ],
+    "cost_note": "low",
+    "note": "Recognition is the easiest way to keep volunteers for next time.",
+    "tags": [
+     "volunteers"
+    ],
+    "conditions": {
+     "min_guests": 30
+    }
+   },
+   {
+    "id": "m07",
+    "kind": "checklist_item",
+    "title": "Plan where people can sit and rest, and mark a quiet corner",
+    "fields": [
+     "event_type",
+     "guest_count"
+    ],
+    "cost_note": "low",
+    "note": "A crowd includes people who tire quickly.",
+    "tags": [],
+    "conditions": {
+     "min_guests": 50
+    }
+   },
+   {
+    "id": "m08",
+    "kind": "menu_note",
+    "title": "Ask the caterer about simple, easy-to-serve food that keeps queues short",
+    "fields": [
+     "event_type"
+    ],
+    "cost_note": "moderate: depends on the caterer's quote",
+    "note": "Short queues matter at community events.",
+    "tags": []
+   }
+  ]
+ },
+ "community_subtypes": {
+  "college_fest": [
+   {
+    "id": "cf1",
+    "kind": "activity",
+    "title": "A student-run stage slot sign-up so performers apply in advance",
+    "fields": [
+     "community_subtype",
+     "guest_count"
+    ],
+    "cost_note": "low",
+    "note": "Advance sign-up keeps the programme realistic.",
+    "tags": [
+     "students"
+    ]
+   },
+   {
+    "id": "cf2",
+    "kind": "checklist_item",
+    "title": "Ask the college which departments or clubs can lend volunteers and equipment",
+    "fields": [
+     "community_subtype"
+    ],
+    "cost_note": "low",
+    "note": "Clubs already organise people and tools.",
+    "tags": [
+     "volunteers"
+    ]
+   },
+   {
+    "id": "cf3",
+    "kind": "decor",
+    "title": "Department-themed corners that students decorate themselves",
+    "fields": [
+     "community_subtype"
+    ],
+    "cost_note": "low",
+    "note": "Ownership by students keeps costs and effort spread out.",
+    "tags": [
+     "personal"
+    ]
+   },
+   {
+    "id": "cf4",
+    "kind": "checklist_item",
+    "title": "Write sponsor note wording: the cause, the date, the audience and what sponsors can expect",
+    "fields": [
+     "community_subtype"
+    ],
+    "cost_note": "low",
+    "note": "Short, clear wording makes sponsor conversations easier.",
+    "tags": [
+     "sponsors"
+    ]
+   }
+  ],
+  "neighbourhood_gathering": [
+   {
+    "id": "ng1",
+    "kind": "activity",
+    "title": "A potluck-style table where each household brings one dish and a label",
+    "fields": [
+     "community_subtype",
+     "guest_count"
+    ],
+    "cost_note": "low",
+    "note": "Shared food spreads the cost and the work.",
+    "tags": [
+     "community"
+    ]
+   },
+   {
+    "id": "ng2",
+    "kind": "activity",
+    "title": "A children's corner run by two or three parents in shifts",
+    "fields": [
+     "community_subtype"
+    ],
+    "cost_note": "low",
+    "note": "Parents can enjoy the event if children are looked after.",
+    "tags": [
+     "kids",
+     "volunteers"
+    ]
+   },
+   {
+    "id": "ng3",
+    "kind": "checklist_item",
+    "title": "Ask the residents' group which common areas and equipment members can use",
+    "fields": [
+     "community_subtype"
+    ],
+    "cost_note": "low",
+    "note": "The group usually knows what is on hand.",
+    "tags": []
+   },
+   {
+    "id": "ng4",
+    "kind": "checklist_item",
+    "title": "Tell neighbours about timing and noise a week ahead with a short notice",
+    "fields": [
+     "community_subtype"
+    ],
+    "cost_note": "low",
+    "note": "Advance notice avoids surprises for nearby homes.",
+    "tags": [
+     "publicity"
+    ]
+   }
+  ],
+  "fundraiser": [
+   {
+    "id": "fr1",
+    "kind": "checklist_item",
+    "title": "Write a one-paragraph story of the cause that every volunteer can repeat",
+    "fields": [
+     "community_subtype"
+    ],
+    "cost_note": "low",
+    "note": "A shared story keeps the message consistent.",
+    "tags": [
+     "publicity"
+    ]
+   },
+   {
+    "id": "fr2",
+    "kind": "checklist_item",
+    "title": "Draft sponsor outreach wording: who you are, what the money is for, and how sponsors will be thanked",
+    "fields": [
+     "community_subtype"
+    ],
+    "cost_note": "low",
+    "note": "Clear wording helps sponsors decide quickly.",
+    "tags": [
+     "sponsors"
+    ]
+   },
+   {
+    "id": "fr3",
+    "kind": "activity",
+    "title": "A visible progress board that shows what has been raised so far",
+    "fields": [
+     "community_subtype",
+     "guest_count"
+    ],
+    "cost_note": "low",
+    "note": "Seeing progress encourages giving.",
+    "tags": [],
+    "conditions": {
+     "min_guests": 30
+    }
+   },
+   {
+    "id": "fr4",
+    "kind": "checklist_item",
+    "title": "Plan how every contribution will be recorded and acknowledged, with a second person present",
+    "fields": [
+     "community_subtype"
+    ],
+    "cost_note": "low",
+    "note": "Two people and a written record protect everyone involved.",
+    "tags": []
+   }
+  ],
+  "cultural_festival_local": [
+   {
+    "id": "cc1",
+    "kind": "activity",
+    "title": "Invite local groups to each present a short piece, with a fixed time for each",
+    "fields": [
+     "community_subtype",
+     "guest_count"
+    ],
+    "cost_note": "low",
+    "note": "Fixed slots keep a varied programme on time.",
+    "tags": [
+     "community"
+    ]
+   },
+   {
+    "id": "cc2",
+    "kind": "checklist_item",
+    "title": "Ask community elders and organisers how the day is usually run and who should be consulted",
+    "fields": [
+     "community_subtype"
+    ],
+    "cost_note": "low",
+    "note": "The people who know the community's own practice should guide it.",
+    "tags": []
+   },
+   {
+    "id": "cc3",
+    "kind": "decor",
+    "title": "Display boards where each group can share a short story about its work",
+    "fields": [
+     "community_subtype"
+    ],
+    "cost_note": "low",
+    "note": "Gives visitors something to read between performances.",
+    "tags": [
+     "personal"
+    ]
+   },
+   {
+    "id": "cc4",
+    "kind": "checklist_item",
+    "title": "Plan clear walking routes and signage for visitors and performers",
+    "fields": [
+     "community_subtype"
+    ],
+    "cost_note": "low",
+    "note": "A clear route reduces crowding at doors.",
+    "tags": []
+   }
+  ],
+  "other": [
+   {
+    "id": "co1",
+    "kind": "checklist_item",
+    "title": "Agree one sentence that says what the event is for, and use it on every poster and message",
+    "fields": [
+     "community_subtype"
+    ],
+    "cost_note": "low",
+    "note": "A single purpose keeps the programme focused.",
+    "tags": []
+   },
+   {
+    "id": "co2",
+    "kind": "activity",
+    "title": "A short welcome by the organisers that names the helpers",
+    "fields": [
+     "community_subtype"
+    ],
+    "cost_note": "low",
+    "note": "Names make volunteers feel seen.",
+    "tags": []
+   }
+  ]
+ }
+}

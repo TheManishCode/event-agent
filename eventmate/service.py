@@ -26,6 +26,11 @@ from eventmate.agents.tradeoff import TradeoffAgent
 from eventmate.agents.validator import ValidatorAgent
 from eventmate.agents.vendor import VendorAgent, VendorRepository
 from eventmate.leads import LeadStore
+from eventmate import community as community_mod
+from eventmate.community import AccessibilityStore, ChecklistStore
+from eventmate.digests import DigestStore
+from eventmate.notify import OwnerNotifier
+from eventmate.ideas import IdeaService
 from eventmate.channels import Channel, channels_from_env
 from eventmate.conversations import ConversationService
 from eventmate.outreach import OutreachStore
@@ -39,7 +44,7 @@ from eventmate.llm import LLMClient, client_from_env
 from eventmate.logs import RunLogs
 from eventmate.rules import Advisory, advisories_for
 from eventmate.plan_store import PlanStore, draft_from_plan
-from eventmate.schemas import WeatherAdvice, BookingStatus, DecisionLogEntry, SelectionQuoteStatus, LedgerEntry, LedgerSummary, Disruption, PlanDiff, PlanOutcome, PlanVersion, ReplanOutcome, TradeoffOption, TradeoffReport, ValidationReport, VendorCategory
+from eventmate.schemas import WeatherAdvice, BookingStatus, DecisionLogEntry, SelectionQuoteStatus, LedgerEntry, LedgerSummary, Disruption, DisruptionKind, PlanDiff, PlanOutcome, PlanVersion, ReplanOutcome, TradeoffOption, TradeoffReport, ValidationReport, VendorCategory
 from eventmate.symbolic import SymbolicChecker
 from eventmate.deals import DealAgent
 from eventmate.discovery import OverpassSource
@@ -90,12 +95,21 @@ class EventMate:
         self.deals_factory = lambda on_call: DealAgent(default_provider(), SafeFetcher(), on_call=on_call)
         self.observations = ObservationStore(self.store.root, self.repo)
         self.repo.quotes = self.observations
+        self.access_store = AccessibilityStore(self.store.root)
+        self.checklist_store = ChecklistStore(self.store.root)
+        self.repo.access = self.access_store
         self.outreach_store = OutreachStore(self.store.root, self.observations.checklists)
         self._jobs: Optional[JobWorker] = None
         self.jobs_clock = None  # tests inject a clock here before the worker is first used
         self._job_store: Optional[JobStore] = None
+        self.digest_store = DigestStore(self.store.root)
         self.conversations = ConversationService(self.outreach_store, channels or channels_from_env(os.environ), self.store.latest)
         self.conversations.guards.append(self._job_guard)
+        self.notifier = OwnerNotifier(
+            self.store.root, self.digest_store, lambda: self.conversations.channels["email"], self._jobs_of, self._vendor_names, self._vendor_addresses,
+            self._own_addresses,
+            lambda: self.outreach_store.killed,
+        )
         decisions = self.logs.decisions
         scheduler = SchedulingAgent(decisions)
         budget_policy = BudgetPolicy()
@@ -105,6 +119,7 @@ class EventMate:
         planner = PlannerAgent(self.logs, scheduler, symbolic or SymbolicChecker())
         self.validator = ValidatorAgent(self.repo, self.logs, scheduler.policy, require_symbolic, budget_policy)
         self.llm = llm
+        self.ideas = IdeaService(self.store.root, self.logs, self.repo, llm)
         self.explainer = ExplainerAgent(self.logs, llm)
         self.manager = ManagerAgent(self.repo, decisions, budget, vendor, guest, planner, self.validator, self.explainer, self.store)
         self.tradeoff = TradeoffAgent(self.repo, decisions, self._dry_run_ok, budget_policy)
@@ -238,6 +253,23 @@ class EventMate:
                 return "the job this belongs to has ended" if job.status in ("done", "expired", "cancelled") else None
         return None
 
+    def _jobs_of(self, plan_id: str):
+        return self.jobs.store.list(plan_id) if (self.store.root / "jobs.db").exists() else []
+
+    def _own_addresses(self) -> set:
+        """The mailboxes EventMate itself sends from."""
+        return {a for a in (getattr(getattr(ch, "config", None), "from_addr", "") for ch in self.conversations.channels.values()) if a}
+
+    def _vendor_names(self):
+        return {p.id: p.name for c in VendorCategory for p in self.repo.providers(c)}
+
+    def _vendor_addresses(self) -> set:
+        """Every email address EventMate has written to or saved for a vendor: none of these may ever be the owner's notification address."""
+        out = {c.email for c in self.outreach_store.contacts().values() if c.email}
+        for pid in self.outreach_store.plan_ids():
+            out |= {d.recipient for d in self.outreach_store.list(pid) if d.channel == "email"}
+        return out
+
     def background_round(self):
         """One round of the agent's background work: the job worker if any job exists (it polls conversations itself), otherwise just the conversations."""
         if (self.store.root / "jobs.db").exists():
@@ -361,12 +393,37 @@ class EventMate:
         self._clock(today)
         return self.replanner.replan(plan_id, disruption, today)
 
+    def update_community(self, plan_id: str, details, today: Optional[date] = None) -> ReplanOutcome:
+        """Replace a community plan's details (attendance, funding, volunteers, programme, access needs) as a validated new version, or refuse with repairs."""
+        return self.replan(plan_id, Disruption(kind=DisruptionKind.COMMUNITY_UPDATE, new_community=details), today)
+
+    def record_venue_accessibility(self, venue_id: str, features, evidence_ref: str, entered_by: str):
+        """What a venue told the user about its access. Needs evidence; it turns an unverified item into a pass or a failure on the next validation."""
+        if self.repo.get(VendorCategory.VENUE, venue_id) is None:
+            raise ValueError(f"{venue_id!r} is not a venue in the database")
+        return self.access_store.record(venue_id, features, evidence_ref, entered_by)
+
     def explain(self, plan_id: str, version: Optional[int] = None, with_diff: bool = True) -> Explanation:
         plan = self.store.load(plan_id, version)
         diff = None
         if with_diff and plan.parent_version:
             diff = diff_plans(self.store.load(plan_id, plan.parent_version), plan)
-        return self.explainer.explain(plan, diff)
+        comm = community_mod.build_status(plan, self.checklist_store, self.revalidate(plan_id, version)) if plan.request.event_type.value == "community" else None
+        return self.explainer.explain(plan, diff, comm)
+
+    def community_status(self, plan_id: str, today: Optional[date] = None):
+        """The community view of a plan: hard checks, what could not be decided, and the conditional items with the user's marks."""
+        plan = self.store.latest(plan_id)
+        report = self.revalidate(plan_id) if plan.request.event_type.value == "community" else None  # current data: a venue's recorded answer counts at once
+        return community_mod.build_status(plan, self.checklist_store, report)
+
+    def set_community_item(self, plan_id: str, item_id: str, status: str, by, on, note: str = "", today: Optional[date] = None):
+        """The user's mark on one conditional item (confirmed, not applicable, or reopened). Nothing else ever changes an item."""
+        plan = self.store.latest(plan_id)
+        if plan.request.event_type.value != "community":
+            raise ValueError("this plan is not a community event")
+        shown = [d.item_id for d, _ in community_mod.shown_items(plan.request)]
+        return self.checklist_store.mark(plan_id, item_id, shown, status, by, on, note, today or date.today())
 
     def diff(self, plan_id: str, old_version: int, new_version: int) -> PlanDiff:
         return diff_plans(self.store.load(plan_id, old_version), self.store.load(plan_id, new_version))

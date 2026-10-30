@@ -28,9 +28,30 @@ agent layer around it.
 
 EventMate can write to your vendors and read their replies (ADR-042). Every message is a proposal you approve (the exact text, bound to a hash); the agent then sends it through **your own** mailbox
 (SMTP/IMAP) or a self-hosted [WAHA](https://github.com/devlikeapro/waha) WhatsApp gateway, and shows what comes back in the **Vendor chats** tab. Replies are shown as the vendor's own words with the
-amounts and questions quoted; nothing becomes a quote until you record it. Settings are in `.env.example`.
+amounts and questions quoted; nothing becomes a quote until you record it. Settings are in `.env.example`; see `docs/EMAIL_SETUP.md`.
 `python -m eventmate inbox show|poll|approve|deny` does the same from the terminal.
 Optionally you can give the agent a standing permission to ask routine follow-up questions on its own (ADR-043): fixed questions only, time-boxed and capped, with a kill switch.
+
+**Email status: tested with fake SMTP/IMAP only; not yet validated against a real mailbox.** (`docs/EMAIL_VALIDATION.md` is the place for that record.)
+
+Safety wording, stated precisely: the fixed request templates and the automatic follow-up templates never contain your budget or a price. Free-text follow-ups you write yourself are cleaned and
+length-limited but not filtered for numbers: what you type is what is sent. Sends use claim protection (a draft is claimed before it is sent, by a file lock across processes) and conservative
+handling of an unknown outcome (a send whose result cannot be known is never retried automatically); this reduces the chance of a duplicate and does not make one impossible.
+
+## How this meets the brief
+
+The brief: a GenAI-powered planning assistant for weddings, birthdays and community events, with budgets, timelines, vendor checklists and personalized ideas.
+
+| Brief item | Where it lives | Notes |
+|---|---|---|
+| Budgets | `agents/budget.py`, `reality.py`, ledger, trade-offs | Default split is normalized weights: about 36% venue, 41% caterer, 12% photographer of the budget left after a 10% contingency reserve (weights 3500/4000/1200 basis points over their sum of 8700). A community event uses its own profile's shares; you can override any split |
+| Timelines | `agents/scheduler.py`, `cpsat.py`, PDDL cross-check | CP-SAT schedule with lead times, buffers and shared resources; community programme activities are scheduled by the same solver |
+| Vendor checklists | `data/quote_checklists.json`, quote ledger, vendor score, vendor chats | The checklist is what a quote request asks the vendor; the ledger shows what is missing |
+| Personalized ideas | `ideas.py`, Ideas tab | Suggestions from verified plan facts; templates work with the model off; every model idea is guarded; pin or dismiss |
+| Weddings, birthdays | `EventType` and the planner | Unchanged by the community work (regression-tested) |
+| Community events | `community.py`, `data/community_profiles.json`, Community tab | Hard checks, conditional items only you can mark, and suggestions are kept apart |
+| Where GenAI is used | intake reading, ideas, assistant routing and answers, explanation rewording | Every model output is guarded and degrades to deterministic text |
+| Where GenAI is deliberately not used | plan validity, prices, availability, capacity, cultural or legal claims, quote recording | Code and data decide these; a model may only phrase or propose |
 
 ## Quick start
 
@@ -47,7 +68,7 @@ python -m eventmate tradeoffs "<request that fails on budget>" --apply 1   # ver
 python -m eventmate show <plan_id> ; python -m eventmate diff <plan_id> 1 3 ; python -m eventmate validate <plan_id>
 
 python -m eventmate.web                         # UI on http://127.0.0.1:8765
-python -m pytest eventmate/tests                # ~420 tests (browser tests skip without chromium)
+python -m pytest eventmate/tests                # 1499 passed on Python 3.14.8 with the solvers and Chromium present (browser tests skip without Chromium)
 ```
 
 Fast Downward and VAL are built under `solvers/` (gitignored) by the base repo's `bootstrap.py`, or:

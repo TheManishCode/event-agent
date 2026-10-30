@@ -7,9 +7,9 @@
     ["Small birthday", "Plan a 40 guests birthday in Pune on December 12 under INR 90,000 with catering and a photographer."],
     ["Too tight", "Plan a 120 guests party in Pune on December 12 under INR 60,000 with vegetarian catering."],
   ];
-  const TABS = [["overview", "Overview"], ["timeline", "Timeline"], ["vendors", "Vendors"], ["budget", "Budget"], ["talk", "Vendor chats"], ["changes", "Changes"], ["audit", "Audit log"], ["ask", "Ask"]];
+  const TABS = [["overview", "Overview"], ["ideas", "Ideas"], ["timeline", "Timeline"], ["vendors", "Vendors"], ["budget", "Budget"], ["community", "Community"], ["talk", "Vendor chats"], ["changes", "Changes"], ["audit", "Audit log"], ["ask", "Ask"]];
   const AGENTS = { allocate_budget: "budget", track_guests: "guest", source_vendor: "vendor", build_schedule: "scheduler", schedule_reminder: "scheduler", build_plan_model: "planner", validate_plan: "validator", explain_plan: "explainer" };
-  const state = { csrf: "", today: "", plans: [], planId: null, version: null, plan: null, versions: [], tab: "overview", tasks: null, diff: null, decisions: null, ask: {}, roles: ["organizer"], attention: 0, senderName: "", prefillQuote: null, talkTimer: null };
+  const state = { csrf: "", today: "", plans: [], planId: null, version: null, plan: null, versions: [], tab: "overview", tasks: null, diff: null, decisions: null, ask: {}, roles: ["organizer"], attention: 0, senderName: "", prefillQuote: null, talkTimer: null, ideaPrefs: "" };
 
   // ------------------------------------------------------------ helpers
   const $ = (sel, root = document) => root.querySelector(sel);
@@ -214,13 +214,14 @@
 
   function renderTabs() {
     const nav = clear($("#tabs"));
-    for (const [id, label0] of TABS) nav.append(el("button", { class: "tab", role: "tab", id: "tab-" + id, "aria-selected": String(state.tab === id), "aria-controls": "panel-" + id, type: "button", text: id === "talk" && state.attention ? `${label0} (${state.attention})` : label0, on: { click: () => { state.tab = id; renderTabs(); renderPanels(); } } }));
+    if (state.tab === "community" && state.plan && state.plan.request.event_type !== "community") state.tab = "overview";
+    for (const [id, label0] of TABS) if (!(id === "community" && state.plan && state.plan.request.event_type !== "community")) nav.append(el("button", { class: "tab", role: "tab", id: "tab-" + id, "aria-selected": String(state.tab === id), "aria-controls": "panel-" + id, type: "button", text: id === "talk" && state.attention ? `${label0} (${state.attention})` : label0, on: { click: () => { state.tab = id; renderTabs(); renderPanels(); } } }));
   }
 
   function renderPanels() {
     clearInterval(state.talkTimer);
     const host = clear($("#panels"));
-    const builders = { overview: panelOverview, timeline: panelTimeline, vendors: panelVendors, budget: panelBudget, talk: panelTalk, changes: panelChanges, audit: panelAudit, ask: panelAsk };
+    const builders = { overview: panelOverview, ideas: panelIdeas, community: panelCommunity, timeline: panelTimeline, vendors: panelVendors, budget: panelBudget, talk: panelTalk, changes: panelChanges, audit: panelAudit, ask: panelAsk };
     const panel = el("div", { class: "panel", role: "tabpanel", id: "panel-" + state.tab, "aria-labelledby": "tab-" + state.tab });
     host.append(panel);
     builders[state.tab](panel);
@@ -537,6 +538,203 @@
     if (!any) card.append(el("p", { class: "muted", id: "scores-empty", text: "No quotes recorded yet. Record quotes above to compare vendors." }));
   }
 
+  // ------------------------------------------------------------ community
+  // Community events (ADR-046). Hard checks are computed; conditional items are the user's to mark; nothing here says a plan is safe or compliant.
+  const ANSWER_LABELS = {
+    public_event: "Is it open to the public?", third_party_premises: "Is the space owned by someone else (a venue, society or institution)?", amplified_sound: "Will you use loudspeakers or amplified music?",
+    sells_food: "Will food be sold?", collects_money: "Will you collect or receive money from the public?", large_crowd: "Do you expect a large crowd?",
+    temporary_structures: "Will you set up stages, tents or electrical rigging?", physical_activities: "Will there be physical or sports activities?", outdoor_area: "Is any part outdoors?",
+  };
+  const ACCESS_LABELS = { step_free_access: "Step-free access", accessible_toilet: "Accessible toilet", reserved_seating: "Reserved seating", hearing_support: "Hearing support", accessible_parking: "Accessible parking" };
+  const PHASES = ["setup", "event", "teardown"];
+
+  function panelCommunity(root) {
+    const card = el("section", { class: "card", id: "community" }, el("h2", { text: "Community event" }));
+    root.append(card);
+    renderCommunity(card);
+  }
+
+  async function renderCommunity(card) {
+    const base = `/api/plans/${encodeURIComponent(state.planId)}`;
+    const r = await api(`${base}/community`);
+    for (const n of [...card.children].slice(1)) n.remove();
+    if (!r.ok) { card.append(el("p", { class: "muted", text: (r.data && r.data.error) || "Community details could not be loaded." })); return; }
+    const d = r.data, again = () => renderCommunity(card);
+    const msg = el("div", { class: "muted", id: "c-msg", role: "status" });
+    card.append(
+      el("p", { class: "muted", text: `${d.profile_label}. Profile v${d.profile_version}${d.profile_reviewed ? "" : ", not reviewed by any authority"}: its roles, budget shares and timing are adjustable defaults, not rules.` }),
+      el("p", { id: "c-summary", class: "lead", text: d.summary }), el("p", { class: "muted", id: "c-summary-detail", text: d.summary_detail }));
+
+    const checks = el("ul", { class: "checks", id: "c-checks" });
+    for (const c of d.checks) checks.append(el("li", { class: "check " + (c.passed ? "pass" : "fail") }, el("b", { text: (c.passed ? "Passed: " : "Failed: ") + titleCase(c.name) }), el("span", { class: "muted", text: " " + c.detail })));
+    card.append(el("h3", { text: "Checked from your details and the database" }), checks);
+    if (d.unverified.length) {
+      const un = el("ul", { class: "checks", id: "c-unverified" });
+      for (const u of d.unverified) un.append(el("li", { class: "check warn" }, el("b", { text: "Could not be decided: " + titleCase(u.name) }), el("span", { class: "muted", text: ` ${u.detail}. To fix: ${u.repair}` })));
+      card.append(el("h3", { text: "Not verified" }), un);
+    }
+
+    // ---- the editable details; every change is checked and saved as a new plan version, or refused with repairs
+    const cd = JSON.parse(JSON.stringify(d.details || { subtype: d.subtype }));
+    for (const k of ["funding", "slots", "shifts", "program", "volunteers", "access_needs"]) cd[k] = cd[k] || [];
+    cd.answers = cd.answers || {};
+    let formBox = el("div", { id: "c-form" });
+    const drawForm = () => {
+      const next = buildForm(cd, d, drawForm);
+      formBox.replaceWith(next); formBox = next;
+    };
+    formBox = buildForm(cd, d, drawForm);
+    const errors = el("div", { id: "c-errors", class: "bad", hidden: true });
+    const save = el("button", { class: "btn primary", id: "c-save", type: "button", text: "Check and save these details", on: { click: async () => {
+      clear(errors); errors.hidden = true;
+      const body = cleanCommunity(cd);
+      const res = await api(`${base}/community`, { method: "POST", body });
+      if (res.ok && res.data.plan) { await refreshList(); await selectPlan(state.planId, null, "community"); toast(`Saved as version ${res.data.plan.version}.`); return; }
+      const vs = (res.data && res.data.violations) || [];
+      errors.hidden = false;
+      if (vs.length) for (const v of vs) errors.append(el("p", {}, el("b", { text: titleCase(v.constraint) + ": " }), v.detail, el("br"), el("span", { class: "muted", text: "To fix: " + v.repair })));
+      else errors.append(el("p", { text: (res.data && res.data.details && res.data.details[0] && res.data.details[0].message) || (res.data && res.data.error) || "Those details were refused." }));
+    } } });
+    card.append(el("h3", { text: "Your details" }), el("p", { class: "muted", text: "Fill in what you know. Saving checks it all; if something fails you see what and how to fix it, and nothing is changed." }), formBox, el("div", { class: "actions" }, save), errors);
+
+    // ---- conditional requirements: only you can mark them
+    card.append(el("h3", { text: "Things to check with others" }),
+      el("p", { class: "muted", text: "Shown because of your answers. EventMate does not know the rules where you live and does not verify any of these: each says who to check with, and only you can mark it." }));
+    if (!d.items.length) card.append(el("p", { class: "muted", id: "c-no-items", text: "No conditional items apply to your answers." }));
+    for (const i of d.items) {
+      const who = el("input", { class: "input", maxlength: "60", placeholder: "Your name", "aria-label": "Your name", value: state.senderName || "" });
+      const note = el("input", { class: "input", maxlength: "200", placeholder: "Who told you, or why it does not apply", "aria-label": "Note", value: i.note || "" });
+      const mark = (status) => async () => {
+        if (!who.value.trim()) { msg.textContent = "Enter your name: the record says who confirmed it."; return; }
+        const res = await api(`${base}/community/items/${i.item_id}`, { method: "POST", body: { status, by: who.value.trim(), on: state.today, note: note.value.trim() } });
+        if (res.ok) again(); else msg.textContent = (res.data && res.data.error) || (res.data && res.data.details && res.data.details[0] && res.data.details[0].message) || "Could not record that.";
+      };
+      card.append(el("div", { class: "alt cond", "data-item": i.item_id },
+        el("b", { text: i.title }), " ", el("span", { class: "tag " + (i.status === "not_verified" ? "rej" : "eli"), text: titleCase(i.status) }),
+        el("div", { class: "muted", text: i.instruction + "." }),
+        i.recorded_by ? el("div", { class: "muted", text: `Recorded by ${i.recorded_by} on ${i.recorded_on}${i.note ? ": " + i.note : ""}` }) : null,
+        el("div", { class: "actions" }, who, note,
+          el("button", { class: "btn small confirm-item", type: "button", text: "I confirmed this", on: { click: mark("confirmed_by_user") } }),
+          el("button", { class: "btn small na-item", type: "button", text: "Does not apply", on: { click: mark("not_applicable_by_user") } }),
+          i.status !== "not_verified" ? el("button", { class: "btn small", type: "button", text: "Reopen", on: { click: mark("not_verified") } }) : null)));
+    }
+    card.append(msg);
+
+    // ---- what the venue said about access
+    const venue = state.plan.selections.find((x) => x.category === "venue");
+    if (venue) {
+      const boxes = Object.keys(ACCESS_LABELS).map((k) => ({ k, box: el("input", { type: "checkbox", value: k, "aria-label": ACCESS_LABELS[k] }) }));
+      const evidence = el("input", { class: "input", id: "a-evidence", maxlength: "200", placeholder: "Where the answer came from (email, call, date)", "aria-label": "Evidence" });
+      const by = el("input", { class: "input", maxlength: "80", placeholder: "Your name", "aria-label": "Your name", value: state.senderName || "" });
+      card.append(el("h3", { text: `What ${venue.name} told you about access` }),
+        el("p", { class: "muted", text: "Ask the venue, then record its answer here. Tick only what the venue said it has; leave all unticked if it said none." }),
+        el("div", { class: "actions" }, ...boxes.map((b) => el("label", { class: "muted" }, b.box, " " + ACCESS_LABELS[b.k] + " "))),
+        el("div", { class: "actions" }, evidence, by, el("button", { class: "btn small", id: "a-save", type: "button", text: "Record the venue's answer", on: { click: async () => {
+          const res = await api(`/api/venues/${venue.vendor_id}/accessibility`, { method: "POST", body: { features: boxes.filter((b) => b.box.checked).map((b) => b.k), evidence_ref: evidence.value.trim(), entered_by: by.value.trim() } });
+          if (res.ok) again(); else msg.textContent = (res.data && res.data.details && res.data.details[0] && res.data.details[0].message) || (res.data && res.data.error) || "Could not record that.";
+        } } })));
+    }
+  }
+
+  const intOrNull = (v) => { const n = parseInt(v, 10); return Number.isFinite(n) ? n : null; };
+
+  // The form edits the object in place, so what you typed survives adding or removing a row.
+  function buildForm(cd, d, redraw) {
+    const root = el("div", { id: "c-form" });
+    const numInput = (obj, key, ph, id) => el("input", { class: "input", type: "number", min: "0", placeholder: ph, "aria-label": ph, id, value: obj[key] ?? "", on: { input: (ev) => { obj[key] = ev.target.value === "" ? null : parseInt(ev.target.value, 10); } } });
+    const txt = (obj, key, ph, max = 60) => el("input", { class: "input", maxlength: String(max), placeholder: ph, "aria-label": ph, value: obj[key] ?? "", on: { input: (ev) => { obj[key] = ev.target.value; } } });
+    const sel = (obj, key, opts, label) => el("select", { class: "input", "aria-label": label, on: { change: (ev) => { obj[key] = ev.target.value; } } }, ...opts.map(([v, t]) => el("option", { value: v, text: t, selected: obj[key] === v })));
+    const rows = (title, list, make, blank, addText, id) => el("div", { id }, el("h4", { text: title }), ...list.map((row, i) => el("div", { class: "actions row" }, ...make(row, i), el("button", { class: "btn small", type: "button", text: "Remove", on: { click: () => { list.splice(i, 1); redraw(); } } }))),
+      el("button", { class: "btn small", type: "button", text: addText, on: { click: () => { list.push(blank()); redraw(); } } }));
+
+    root.append(
+      el("h4", { text: "Attendance" }),
+      el("div", { class: "actions" }, numInput(cd, "attendance_low", "Lowest expected attendance", "c-att-low"), numInput(cd, "attendance_high", "Highest expected attendance", "c-att-high")),
+      el("p", { class: "muted", text: "The venue must hold the highest number. Leave blank to plan for the guest count alone." }),
+      el("h4", { text: "Money" }),
+      el("div", { class: "actions" }, numInput(cd, "own_funds_inr", "Your own funds (INR)", "c-own"),
+        el("label", { class: "muted" }, el("input", { type: "checkbox", id: "c-count-committed", checked: !!cd.count_committed, on: { change: (ev) => { cd.count_committed = ev.target.checked; } } }), " Also count money people have committed (not yet received)")),
+      el("p", { class: "muted", text: "The plan may spend your own funds plus money you record as received. Pledged money is never counted; committed money only if you tick the box, and it is then shown as such." }),
+      rows("Funding sources", cd.funding, (f) => [txt(f, "label", "Who or what"), sel(f, "status", [["pledged", "Pledged (a hope)"], ["committed", "Committed (promised)"], ["received", "Received (in hand)"]], "Status"), numInput(f, "amount_inr", "Amount (INR)")],
+        () => ({ label: "", status: "pledged", amount_inr: null }), "Add a funding source", "c-funding"),
+      el("h4", { text: "Volunteers" }),
+      el("textarea", { class: "input", id: "c-volunteers", rows: "3", placeholder: "One name per line", "aria-label": "Volunteers", on: { input: (ev) => { cd.volunteers = ev.target.value.split("\n").map((x) => x.trim()).filter(Boolean); } } }, cd.volunteers.join("\n")),
+      el("div", { class: "actions" }, txt(cd, "setup_owner", "Who owns setup (a volunteer above)"), txt(cd, "cleanup_owner", "Who owns cleanup (a volunteer above)")),
+      el("p", { class: "muted", text: "Roles the profile usually suggests (tap to add as a role you confirm you need): " }),
+      el("div", { class: "chips", id: "c-suggested" }, ...d.suggested_roles.map((r) => el("button", { class: "chip", type: "button", title: r.note, text: r.role, on: { click: () => { cd.slots.push({ slot_id: "s" + (cd.slots.length + 1) + Math.floor(Math.random() * 90 + 10), role: r.role, phase: /setup/i.test(r.role) ? "setup" : /cleanup/i.test(r.role) ? "teardown" : "event", needed: 1, start_min: null, end_min: null }); redraw(); } } }))),
+      rows("Roles you need (confirmed)", cd.slots, (s) => [txt(s, "role", "Role", 40), sel(s, "phase", PHASES.map((p) => [p, titleCase(p)]), "Phase"), numInput(s, "needed", "How many"), numInput(s, "start_min", "From minute (optional)"), numInput(s, "end_min", "To minute (optional)")],
+        () => ({ slot_id: "s" + Math.floor(Math.random() * 9000 + 1000), role: "", phase: "event", needed: 1, start_min: null, end_min: null }), "Add a role", "c-slots"),
+      rows("Who covers what", cd.shifts, (s) => [txt(s, "volunteer", "Volunteer"), txt(s, "role", "Role", 40), sel(s, "phase", PHASES.map((p) => [p, titleCase(p)]), "Phase"), numInput(s, "start_min", "From minute (optional)"), numInput(s, "end_min", "To minute (optional)")],
+        () => ({ volunteer: "", role: "", phase: "event", start_min: null, end_min: null }), "Add a shift", "c-shifts"),
+      rows("Programme", cd.program, (a) => [txt(a, "title", "Activity", 80), numInput(a, "minutes", "Minutes"), txt(a, "resource", "Stage or place (shared)", 20),
+        sel(a, "after", [["", "No fixed order"], ...cd.program.filter((x) => x !== a && x.activity_id).map((x) => [x.activity_id, "After: " + (x.title || x.activity_id)])], "Comes after")],
+        () => ({ activity_id: "p" + Math.floor(Math.random() * 90000 + 10000), title: "", minutes: 30, resource: "stage", after: "" }), "Add an activity", "c-program"),
+      el("h4", { text: "Access needs of your guests" }),
+      el("div", { class: "actions" }, ...Object.keys(ACCESS_LABELS).map((k) => el("label", { class: "muted" }, el("input", { type: "checkbox", checked: cd.access_needs.includes(k), "aria-label": ACCESS_LABELS[k], on: { change: (ev) => { const s = new Set(cd.access_needs); if (ev.target.checked) s.add(k); else s.delete(k); cd.access_needs = [...s]; } } }), " " + ACCESS_LABELS[k] + " "))),
+      el("h4", { text: "Questions that decide what to check" }),
+      ...Object.entries(ANSWER_LABELS).map(([k, q]) => el("div", { class: "actions" }, el("span", { text: q }), sel(cd.answers, k, [["unsure", "Not sure"], ["yes", "Yes"], ["no", "No"]], q))));
+    return root;
+  }
+
+  // What the form holds, trimmed to what the server accepts: empty rows and blank numbers are dropped, not guessed.
+  function cleanCommunity(cd) {
+    const out = { subtype: cd.subtype, count_committed: !!cd.count_committed, answers: {} };
+    for (const k of ["attendance_low", "attendance_high", "own_funds_inr"]) if (cd[k] !== null && cd[k] !== undefined && cd[k] !== "") out[k] = cd[k];
+    out.funding = cd.funding.filter((f) => f.label && f.amount_inr > 0).map((f) => ({ label: f.label, status: f.status, amount_inr: f.amount_inr }));
+    out.volunteers = cd.volunteers;
+    for (const k of ["setup_owner", "cleanup_owner"]) if (cd[k]) out[k] = cd[k];
+    out.slots = cd.slots.filter((s) => s.role).map((s) => { const o = { slot_id: s.slot_id, role: s.role, phase: s.phase, needed: s.needed || 1 }; if (s.start_min) o.start_min = s.start_min; if (s.end_min) o.end_min = s.end_min; return o; });
+    out.shifts = cd.shifts.filter((s) => s.volunteer && s.role).map((s) => { const o = { volunteer: s.volunteer, role: s.role, phase: s.phase }; if (s.start_min) o.start_min = s.start_min; if (s.end_min) o.end_min = s.end_min; return o; });
+    out.program = cd.program.filter((a) => a.title).map((a) => { const o = { activity_id: a.activity_id, title: a.title, minutes: a.minutes || 30, resource: (a.resource || "stage").toLowerCase().replace(/[^a-z0-9_]/g, "_").slice(0, 20) }; if (a.after) o.after = a.after; return o; });
+    out.access_needs = cd.access_needs;
+    for (const [k, v] of Object.entries(cd.answers)) if (v) out.answers[k] = v;
+    return out;
+  }
+
+  // ------------------------------------------------------------ ideas
+  // Personalized suggestions (ADR-045): never verified offers, never a price. Pinning one adds a note or checklist item beside the plan; the plan itself is untouched.
+  function panelIdeas(root) {
+    const card = el("section", { class: "card", id: "ideas" }, el("h2", { text: "Ideas" }));
+    root.append(card);
+    renderIdeas(card);
+  }
+
+  async function renderIdeas(card) {
+    const base = `/api/plans/${encodeURIComponent(state.planId)}`;
+    const r = await api(`${base}/ideas`);
+    for (const n of [...card.children].slice(1)) n.remove();
+    if (!r.ok) { card.append(el("p", { class: "muted", text: "Ideas could not be loaded." })); return; }
+    const d = r.data, msg = el("div", { class: "muted", id: "ideas-msg", role: "status" });
+    const prefs = el("input", { id: "ideas-prefs", class: "input", maxlength: "300", placeholder: "Preferences, comma separated (optional, up to 5): rustic, kid friendly", "aria-label": "Preferences", value: state.ideaPrefs || "", on: { input: (ev) => { state.ideaPrefs = ev.target.value; } } });
+    const go = el("button", { class: "btn primary", id: "ideas-go", type: "button", text: d.ideas.length ? "Suggest again" : "Suggest ideas", on: { click: async () => {
+      const list = (state.ideaPrefs || "").split(",").map((x) => x.trim()).filter(Boolean);
+      const res = await api(`${base}/ideas`, { method: "POST", body: { preferences: list } });
+      if (res.ok) renderIdeas(card); else msg.textContent = (res.data && res.data.details && res.data.details[0] && res.data.details[0].message) || (res.data && res.data.error) || "Could not suggest ideas.";
+    } } });
+    card.append(
+      el("p", { class: "muted", id: "ideas-notice", text: d.notice + ". " + "They come from your plan's facts, carry no prices and never change the plan. Pin one to keep it as a note or checklist item." }),
+      el("div", { class: "actions" }, prefs, go), msg);
+    if (d.source) card.append(el("p", { class: "muted", text: `Made ${d.source.startsWith("llm:") ? "with a model (" + d.source.slice(4) + "), checked by rules" : "from built-in templates"} using: ${d.facts_used.map(titleCase).join(", ")}.` }));
+    for (const i of d.ideas) {
+      card.append(el("div", { class: "alt idea", "data-idea": i.idea_id },
+        el("span", { class: "tag", text: titleCase(i.kind) }), " ", el("b", { text: i.title }),
+        el("div", { class: "muted", text: i.why }), i.est_cost_note ? el("div", { class: "muted", text: "Cost: " + i.est_cost_note }) : null,
+        el("div", { class: "actions" },
+          d.pinned.includes(i.idea_id) ? el("span", { class: "tag eli", text: "pinned" }) : el("button", { class: "btn small pin", type: "button", text: "Pin", on: { click: async () => { const res = await api(`${base}/ideas/${i.idea_id}/pin`, { method: "POST", body: {} }); if (res.ok) renderIdeas(card); else msg.textContent = (res.data && res.data.error) || "Could not pin."; } } }),
+          el("button", { class: "btn small dismiss", type: "button", text: "Dismiss", on: { click: async () => { const res = await api(`${base}/ideas/${i.idea_id}/dismiss`, { method: "POST", body: {} }); if (res.ok) renderIdeas(card); else msg.textContent = (res.data && res.data.error) || "Could not dismiss."; } } }))));
+    }
+    if (d.dismissed.length) card.append(el("p", { class: "muted", text: `${d.dismissed.length} dismissed.` }));
+    if (!d.ideas.length && !d.source) card.append(el("p", { class: "muted", id: "ideas-empty", text: "No ideas yet. Press Suggest ideas." }));
+    const notes = el("div", { id: "notes" }, el("h3", { text: "Notes and checklist" }));
+    if (!d.notes.length) notes.append(el("p", { class: "muted", text: "Nothing pinned yet." }));
+    for (const n of d.notes) {
+      notes.append(el("label", { class: "note", "data-note": n.note_id, style: { display: "block" } },
+        el("input", { type: "checkbox", checked: n.done, "aria-label": n.text, on: { change: async (ev) => { const res = await api(`${base}/notes/${n.note_id}/done`, { method: "POST", body: { done: ev.target.checked } }); if (res.ok) renderIdeas(card); } } }),
+        " ", el("span", { text: n.text }), " ", el("span", { class: "muted", text: n.kind === "checklist_item" ? "(checklist)" : "(note)" })));
+    }
+    card.append(notes);
+  }
+
   // ------------------------------------------------------------ vendor chats
   // The agent writes to vendors and reads their replies. Nothing leaves without your approval of that exact text; replies are shown as the vendor's own words.
   async function refreshAttention() {
@@ -559,7 +757,7 @@
   const safeLink = (u) => /^(mailto:|https:\/\/wa\.me\/)/.test(u);
 
   async function renderTalk(card) {
-    const [box, contacts, auto, jobsRes] = await Promise.all([api(`/api/plans/${encodeURIComponent(state.planId)}/inbox`), api("/api/contacts"), api(`/api/plans/${encodeURIComponent(state.planId)}/autoreply`), api(`/api/plans/${encodeURIComponent(state.planId)}/jobs`)]);
+    const [box, contacts, auto, jobsRes, digestsRes, notifyRes] = await Promise.all([api(`/api/plans/${encodeURIComponent(state.planId)}/inbox`), api("/api/contacts"), api(`/api/plans/${encodeURIComponent(state.planId)}/autoreply`), api(`/api/plans/${encodeURIComponent(state.planId)}/jobs`), api(`/api/plans/${encodeURIComponent(state.planId)}/digests`), api("/api/notify")]);
     for (const n of [...card.children].slice(1)) n.remove();
     if (!box.ok) { card.append(el("p", { class: "muted", text: "Vendor chats could not be loaded." })); return; }
     const inbox = box.data, saved = contacts.ok ? contacts.data : [];
@@ -627,6 +825,7 @@
       saved.length ? el("p", { class: "muted", id: "c-list", text: "Saved contacts: " + saved.map((c) => `${c.vendor_id} (${[c.email && "email", c.whatsapp && "WhatsApp"].filter(Boolean).join(" + ")})`).join(", ") }) : null,
       msg);
 
+    card.append(updatesView(digestsRes.ok ? digestsRes.data : [], notifyRes.ok ? notifyRes.data : null, { planBase, again, fail }));
     card.append(jobsView(jobsRes.ok ? jobsRes.data : [], saved, { planBase, again, fail, needName }));
     if (!inbox.threads.length) card.append(el("p", { class: "muted", id: "o-empty", text: "No conversations yet. Save a vendor contact, then draft the requests." }));
     for (const t of inbox.threads) card.append(threadView(t, { planBase, canSend, again, fail, needName }));
@@ -640,6 +839,44 @@
       if (res.ok) again(); else fail(res, "That request was refused.");
     } } });
     card.append(el("h3", { text: "Ask one vendor without saving a contact" }), el("div", { class: "actions" }, oneCat, oneCh, oneTo, one));
+  }
+
+  // Job updates (ADR-047): always kept here. An email copy to you is optional, off by default, and needs you to confirm the exact address and what it may contain.
+  function updatesView(digests, notify, ctx) {
+    const { planBase, again, fail } = ctx;
+    const box = el("section", { class: "alt", id: "updates" }, el("b", { text: "Updates" }));
+    if (!digests.length) box.append(el("p", { class: "muted", id: "updates-empty", text: "Nothing yet. Updates from your vendor jobs appear here when something changes or needs you." }));
+    for (const d of digests.slice(0, 8)) {
+      box.append(el("div", { class: "msg in digest", "data-digest": d.digest_id, "data-unread": String(!d.read) },
+        el("div", { class: "muted", text: new Date(d.created_at).toLocaleString() }), d.read ? null : el("span", { class: "tag eli", text: "new" }),
+        el("pre", { style: { whiteSpace: "pre-wrap" }, text: d.text }),
+        d.read ? null : el("button", { class: "btn small", type: "button", text: "Mark read", on: { click: async () => { await api(`${planBase}/digests/${d.digest_id}/read`, { method: "POST", body: {} }); again(); } } })));
+    }
+    if (!notify) return box;
+    const msg = el("div", { class: "muted", id: "notify-msg", role: "status" });
+    const sec = el("div", { id: "notify" }, el("h4", { text: "Email me a copy" }));
+    if (notify.state === "on") {
+      sec.append(el("p", { class: "muted", id: "notify-state", text: `On: updates go to ${notify.destination} and no one else. They include job status and counts${notify.include_vendor_names ? ", vendor names" : ""}${notify.include_amounts ? ", confirmed amounts" : ""}${notify.include_raw_text ? ", the vendors' wording" : ""}; never your budget. Sent ${notify.sent_last_day} of at most ${notify.per_day} in the last day.` }),
+        el("button", { class: "btn small", id: "notify-off", type: "button", text: "Turn off", on: { click: async () => { const r = await api("/api/notify/disable", { method: "POST", body: {} }); if (r.ok) again(); else fail(r, "Could not turn it off."); } } }));
+    } else {
+      const to = el("input", { class: "input", id: "notify-to", maxlength: "254", placeholder: "Your own email address", "aria-label": "Your email address", value: notify.destination || "" });
+      const opts = [["include_vendor_names", "vendor names"], ["include_amounts", "confirmed amounts"], ["include_raw_text", "the vendors' own wording"]].map(([k, t]) => ({ k, t, box: el("input", { type: "checkbox", "aria-label": t, checked: !!notify[k] }) }));
+      const review = el("button", { class: "btn small", id: "notify-review", type: "button", text: "Review and enable", on: { click: async () => {
+        const body = { destination: to.value.trim() }; for (const o of opts) body[o.k] = o.box.checked;
+        const r = await api("/api/notify/propose", { method: "POST", body });
+        if (!r.ok) { msg.textContent = (r.data && r.data.error) || (r.data && r.data.details && r.data.details[0] && r.data.details[0].message) || "That address was refused."; return; }
+        clear(confirmBox);
+        confirmBox.append(el("p", { id: "notify-summary", text: r.data.summary }), el("button", { class: "btn primary small", id: "notify-confirm", type: "button", text: "Yes, that is right: turn it on", on: { click: async () => {
+          const c = await api("/api/notify/confirm", { method: "POST", body: { code: r.data.code } });
+          if (c.ok) again(); else msg.textContent = (c.data && c.data.error) || "Could not confirm.";
+        } } }));
+      } } });
+      const confirmBox = el("div", { id: "notify-confirm-box" });
+      sec.append(el("p", { class: "muted", text: "Off. If you turn it on, EventMate emails you job updates, only to the address you confirm here, only between 09:00 and 20:00 IST, and never your budget. You choose what an email may contain; by default it is status and counts only." }),
+        el("div", { class: "actions" }, to, ...opts.map((o) => el("label", { class: "muted" }, o.box, " " + o.t + " ")), review), confirmBox);
+    }
+    box.append(sec, msg);
+    return box;
   }
 
   // Follow-through jobs (ADR-044): a goal such as "3 comparable caterer quotes by the deadline", kept moving across days. Every item waits for you.
@@ -717,6 +954,7 @@
         const m = it.m, a = m.analysis;
         box.append(el("div", { class: "msg in", "data-unread": String(!m.read) },
           el("div", { class: "muted", text: `${t.request.vendor_name} replied ${new Date(m.received_at).toLocaleString()}` }), m.read ? null : el("span", { class: "tag eli", text: "new" }),
+          m.sender_differs ? el("div", { class: "bad", text: `From ${m.sender}, not the address you wrote to. Read it before trusting anything in it.` }) : null,
           el("pre", { style: { whiteSpace: "pre-wrap" }, text: m.body || "(no text)" }),
           m.attachments ? el("div", { class: "muted", text: `${m.attachments} attachment${m.attachments === 1 ? "" : "s"} not opened` }) : null,
           a.says_unavailable ? el("div", { class: "bad", text: "Reads like they are not available on your date. Check their words." }) : a.says_available ? el("div", { class: "muted", text: "Reads like they are available. Check their words." }) : null,
@@ -955,7 +1193,7 @@
   ];
   const FIELD_LABEL = { guest_count: "guest count", city: "city", event_date: "date", budget_total: "budget" };
   const OPTIONS = {
-    event_type: ["engagement_party", "wedding", "birthday", "corporate", "conference", "other"],
+    event_type: ["engagement_party", "wedding", "birthday", "corporate", "conference", "community", "other"],
     venue_setting: ["any", "indoor", "outdoor"],
     dietary: ["vegetarian", "non_vegetarian", "vegan", "jain", "halal", "gluten_free"],
     services: ["caterer", "photographer"],
@@ -1001,7 +1239,7 @@
     box.hidden = false;
     const val = (field, text, key = field) => {
       const todo = text === null;
-      return el("button", { type: "button", class: "val" + (todo ? " todo" : "") + (chat.flags.has(key) ? " check" : ""), "data-field": field, title: chat.flags.has(key) ? "The AI inferred this. Please check it." : "Click to change", text: todo ? "+ " + FIELD_LABEL[field] : text, on: { click: () => editField(field) } });
+      return el("button", { type: "button", class: "val" + (todo ? " todo" : "") + (chat.flags.has(key) ? " check" : ""), "data-field": field, title: chat.flags.has(key) ? "Inferred from your words, not stated outright. Please check it." : "Click to change", text: todo ? "+ " + FIELD_LABEL[field] : text, on: { click: () => editField(field) } });
     };
     const label = (s) => titleCase(s);
     const line = el("div", {},
@@ -1019,11 +1257,17 @@
     }
     const setting = el("select", { class: "select", "aria-label": "Venue setting", on: { change: (ev) => { chat.draft = { ...d, venue_setting: ev.target.value === "any" ? null : ev.target.value }; chat.flags.delete("venue_setting"); } } },
       ...OPTIONS.venue_setting.map((o) => el("option", { value: o, text: label(o) + (o === "any" ? " venue" : ""), selected: (d.venue_setting || "any") === o })));
+    let subtype = null;
+    if (d.event_type === "community") {
+      if (!chat.subtypes) { chat.subtypes = []; api("/api/community/profiles").then((r) => { if (r.ok) { chat.subtypes = r.data.profiles; chat.defaultSubtype = r.data.default; renderReview(); } }); }
+      subtype = el("select", { class: "select", id: "review-subtype", "aria-label": "Kind of community event", on: { change: (ev) => { chat.draft = { ...d, community_subtype: ev.target.value }; } } },
+        ...chat.subtypes.map((o) => el("option", { value: o.key, text: o.label, selected: (d.community_subtype || chat.defaultSubtype) === o.key })));
+    }
     const gl = el("select", { class: "select", id: "review-guest-list", "aria-label": "Guest list" }, el("option", { value: "", text: "No guest list" }), ...[...$("#guest-list").options].slice(1).map((o) => el("option", { value: o.value, text: o.textContent })));
     const still = missingFields();
     const confirm = el("button", { class: "btn primary", type: "button", disabled: still.length > 0 || chat.busy, text: still.length ? "Still need: " + still.map((f) => FIELD_LABEL[f]).join(", ") : "Looks right, build the plan", on: { click: confirmIntake } });
-    box.append(line, toggles, el("div", { class: "actions" }, setting, gl, confirm));
-    if (chat.flags.size) box.append(el("span", { class: "flagnote", text: "Highlighted in amber: the AI inferred these from your words. Please check them." }));
+    box.append(line, toggles, el("div", { class: "actions" }, setting, subtype, gl, confirm));
+    if (chat.flags.size) box.append(el("span", { class: "flagnote", text: "Highlighted in amber: inferred from your words, not stated outright. Please check them." }));
   }
 
   // Inline edit: the chip turns into a single input, Enter keeps it, Escape cancels.

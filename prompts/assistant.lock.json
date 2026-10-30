@@ -5,5 +5,11 @@
   "static_evals": "passed",
   "behavioral": {
     "status": "not_run"
+  },
+  "other_prompts": {
+    "ideas.generate": {
+      "version": 1,
+      "sha256": "9dfce299a82a85eaf701f407994184f86949b472a02b3e5afa76c47108e55242"
+    }
   }
 }

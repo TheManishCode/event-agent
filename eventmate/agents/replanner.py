@@ -16,6 +16,8 @@ Rules enforced here (and re-checked independently by the Validator):
 from __future__ import annotations
 
 from datetime import date
+
+from pydantic import ValidationError
 from typing import Dict, List, Optional, Set, Tuple
 
 from eventmate.agents.budget import BudgetAgent
@@ -38,6 +40,7 @@ from eventmate.schemas import (
     Disruption,
     DisruptionKind,
     EventRequest,
+    EventType,
     PlanDiff,
     PlanVersion,
     ReplanOutcome,
@@ -66,6 +69,11 @@ def diff_plans(old: PlanVersion, new: PlanVersion) -> PlanDiff:
 
     for key, a, b in req(old.request, new.request):
         (preserved if a == b else changed).append(DiffItem(kind="request", key=key, before=a, after=b))
+    if old.request.community is not None or new.request.community is not None:
+        from eventmate.community import summary
+
+        a, b = summary(old.request.community), summary(new.request.community)
+        (preserved if a == b else changed).append(DiffItem(kind="request", key="community_details", before=a, after=b))
 
     def label(s: VendorSelection) -> str:
         return f"{s.name} (INR {s.cost:,}, {s.booking_status.value})"
@@ -179,7 +187,13 @@ class ReplannerAgent:
         start = len(self.logs.decisions.entry_ids)
         rid = parent.request.request_id
         try:
-            request, excluded, release, reason = self._apply(parent, disruption, today)
+            try:
+                request, excluded, release, reason = self._apply(parent, disruption, today)
+            except ValidationError as exc:  # e.g. a guest count outside a community event's attendance range
+                raise _Rejected(ConstraintViolation(
+                    constraint="request_invalid", detail=str(exc.errors()[0]["msg"])[:300],
+                    repair="change the other related details together (for a community event: the attendance range) so the request is consistent",
+                )) from None
         except _Rejected as rej:
             self._fail(rid, "Disruption rejected", [rej.violation])
             return ReplanOutcome(status="failed", violations=(rej.violation,), decision_entry_ids=tuple(self.logs.decisions.entry_ids[start:]))
@@ -274,6 +288,10 @@ class ReplannerAgent:
             return req, excluded, release, f"vendor cancellation: {name}"
         if d.kind == DisruptionKind.BUDGET_CHANGE:
             return req.with_changes(budget_total=d.new_budget), excluded, release, f"budget change: INR {req.budget_total:,} to INR {d.new_budget:,}"
+        if d.kind == DisruptionKind.COMMUNITY_UPDATE:
+            if req.event_type != EventType.COMMUNITY:
+                raise _Rejected(ConstraintViolation(constraint="not_a_community_event", detail=f"this plan is a {req.event_type.value} event", repair="community details only apply to a community event"))
+            return req.with_changes(community=d.new_community), excluded, release, "community details updated"
         if d.kind == DisruptionKind.GUEST_COUNT_CHANGE:
             return req.with_changes(guest_count=d.new_guest_count), excluded, release, f"guest count change: {req.guest_count} to {d.new_guest_count}"
         if (d.new_date - today).days > MAX_EVENT_AHEAD_DAYS:

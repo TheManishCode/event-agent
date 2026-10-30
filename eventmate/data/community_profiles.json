@@ -1,0 +1,330 @@
+{
+ "schema_version": 1,
+ "version": 1,
+ "reviewed": false,
+ "source": "EventMate draft: adjustable defaults for planning a community event. Not reviewed by event professionals or any authority. Suggested roles are prompts to confirm, not requirements. Conditional items say who to check with and never state a rule.",
+ "default_subtype": "other",
+ "profiles": {
+  "other": {
+   "label": "Community event",
+   "keywords": [
+    "community event",
+    "community gathering",
+    "community fest",
+    "community programme",
+    "community program"
+   ],
+   "budget_weights_bp": {
+    "venue": 5000,
+    "caterer": 3000,
+    "photographer": 500
+   },
+   "event_window": {
+    "start_hour": 16,
+    "minutes": 240
+   },
+   "suggested_roles": [
+    {
+     "role": "registration",
+     "note": "Greets people and keeps a headcount at the door."
+    },
+    {
+     "role": "setup crew",
+     "note": "Sets up the space before doors open."
+    },
+    {
+     "role": "cleanup crew",
+     "note": "Clears and cleans after the event closes."
+    },
+    {
+     "role": "guest helper",
+     "note": "Answers questions and points people to the right place."
+    }
+   ],
+   "always_items": []
+  },
+  "college_fest": {
+   "label": "College fest",
+   "keywords": [
+    "college fest",
+    "college festival",
+    "campus fest",
+    "university fest",
+    "college annual day"
+   ],
+   "budget_weights_bp": {
+    "venue": 4500,
+    "caterer": 3000,
+    "photographer": 800
+   },
+   "event_window": {
+    "start_hour": 12,
+    "minutes": 480
+   },
+   "suggested_roles": [
+    {
+     "role": "registration",
+     "note": "Checks in students and visitors."
+    },
+    {
+     "role": "stage manager",
+     "note": "Keeps the programme on time and cues performers."
+    },
+    {
+     "role": "volunteer desk",
+     "note": "Coordinates all volunteers and breaks."
+    },
+    {
+     "role": "setup crew",
+     "note": "Sets up stages, stalls and signage."
+    },
+    {
+     "role": "cleanup crew",
+     "note": "Clears and cleans after the fest."
+    }
+   ],
+   "always_items": []
+  },
+  "neighbourhood_gathering": {
+   "label": "Neighbourhood gathering",
+   "keywords": [
+    "rwa",
+    "society fest",
+    "society event",
+    "housing society",
+    "apartment association",
+    "neighbourhood",
+    "neighborhood",
+    "colony event",
+    "street party",
+    "block party"
+   ],
+   "budget_weights_bp": {
+    "venue": 3500,
+    "caterer": 4500,
+    "photographer": 300
+   },
+   "event_window": {
+    "start_hour": 17,
+    "minutes": 240
+   },
+   "suggested_roles": [
+    {
+     "role": "food coordinator",
+     "note": "Keeps food and drink stations stocked."
+    },
+    {
+     "role": "games and kids",
+     "note": "Runs activities for children."
+    },
+    {
+     "role": "setup crew",
+     "note": "Sets up the space."
+    },
+    {
+     "role": "cleanup crew",
+     "note": "Clears and cleans afterwards."
+    },
+    {
+     "role": "greeter",
+     "note": "Welcomes residents and guests."
+    }
+   ],
+   "always_items": []
+  },
+  "fundraiser": {
+   "label": "Fundraiser",
+   "keywords": [
+    "fundraiser",
+    "fund-raiser",
+    "fundraising",
+    "charity event",
+    "charity drive",
+    "charity dinner",
+    "donation drive"
+   ],
+   "budget_weights_bp": {
+    "venue": 4000,
+    "caterer": 3500,
+    "photographer": 600
+   },
+   "event_window": {
+    "start_hour": 18,
+    "minutes": 240
+   },
+   "suggested_roles": [
+    {
+     "role": "registration",
+     "note": "Checks in guests and records attendance."
+    },
+    {
+     "role": "collections desk",
+     "note": "Handles contributions with a second person present."
+    },
+    {
+     "role": "host",
+     "note": "Introduces the cause and the programme."
+    },
+    {
+     "role": "setup crew",
+     "note": "Sets up the space."
+    },
+    {
+     "role": "cleanup crew",
+     "note": "Clears and cleans afterwards."
+    }
+   ],
+   "always_items": [
+    "fundraising_rules"
+   ]
+  },
+  "cultural_festival_local": {
+   "label": "Local cultural festival",
+   "keywords": [
+    "cultural festival",
+    "cultural evening",
+    "local festival",
+    "religious festival",
+    "temple event",
+    "temple festival",
+    "church event",
+    "church festival",
+    "mosque event",
+    "gurdwara event",
+    "temple",
+    "church",
+    "mosque",
+    "gurdwara",
+    "masjid"
+   ],
+   "budget_weights_bp": {
+    "venue": 4000,
+    "caterer": 3500,
+    "photographer": 1000
+   },
+   "event_window": {
+    "start_hour": 17,
+    "minutes": 300
+   },
+   "suggested_roles": [
+    {
+     "role": "registration",
+     "note": "Welcomes visitors and keeps a headcount."
+    },
+    {
+     "role": "stage coordinator",
+     "note": "Keeps performances on time."
+    },
+    {
+     "role": "food coordinator",
+     "note": "Looks after food service."
+    },
+    {
+     "role": "setup crew",
+     "note": "Sets up the space."
+    },
+    {
+     "role": "cleanup crew",
+     "note": "Clears and cleans afterwards."
+    }
+   ],
+   "always_items": []
+  }
+ },
+ "conditional_items": [
+  {
+   "id": "venue_permission",
+   "title": "Permission to use the space",
+   "check_with": "the owner of the venue or premises (the venue, society or institution)",
+   "triggers": [
+    "third_party_premises"
+   ]
+  },
+  {
+   "id": "local_permits",
+   "title": "Whether any local permits are needed to hold the event",
+   "check_with": "the local authority or the police station that handles event permissions in your area",
+   "triggers": [
+    "public_event"
+   ]
+  },
+  {
+   "id": "loudspeaker_noise",
+   "title": "Rules about loudspeakers, music and noise",
+   "check_with": "the local authority and the venue",
+   "triggers": [
+    "amplified_sound"
+   ]
+  },
+  {
+   "id": "food_licence",
+   "title": "Whether selling food needs a licence",
+   "check_with": "the local food-safety authority",
+   "triggers": [
+    "sells_food"
+   ]
+  },
+  {
+   "id": "fundraising_rules",
+   "title": "Rules about collecting or receiving money from the public",
+   "check_with": "the local authority, or an accountant or lawyer if you are unsure",
+   "triggers": [
+    "collects_money"
+   ]
+  },
+  {
+   "id": "crowd_limits",
+   "title": "Any limit on how many people may attend",
+   "check_with": "the venue and the local authority",
+   "triggers": [
+    "large_crowd"
+   ]
+  },
+  {
+   "id": "fire_safety",
+   "title": "Fire and safety sign-off for the setup",
+   "check_with": "the venue and the local fire or safety authority",
+   "triggers": [
+    "temporary_structures",
+    "large_crowd"
+   ]
+  },
+  {
+   "id": "first_aid",
+   "title": "First-aid or medical cover",
+   "check_with": "the venue and your own medical contacts",
+   "triggers": [
+    "large_crowd",
+    "physical_activities"
+   ]
+  },
+  {
+   "id": "insurance",
+   "title": "Whether event insurance is needed or expected",
+   "check_with": "the venue and your insurer",
+   "triggers": [
+    "public_event",
+    "collects_money"
+   ]
+  },
+  {
+   "id": "weather_backup",
+   "title": "A weather backup for outdoor areas",
+   "check_with": "the venue",
+   "triggers": [
+    "outdoor_area"
+   ]
+  },
+  {
+   "id": "allergen_info",
+   "title": "Allergen information for the food on offer",
+   "check_with": "the caterer",
+   "triggers": [
+    "sells_food"
+   ],
+   "when_service": [
+    "caterer"
+   ]
+  }
+ ]
+}

@@ -251,6 +251,7 @@ class ConversationService:
             message_id=uuid.uuid4().hex, plan_id=pid, draft_id=d.parent_id or d.draft_id, vendor_id=d.vendor_id, vendor_name=d.vendor_name, category=d.category,
             channel=item.channel, sender=item.sender, received_at=item.received_at, external_id=item.external_id, body=item.body, truncated=item.truncated,
             attachments=item.attachments, analysis=analyze_reply(item.body, checklist),
+            sender_differs=item.channel == "email" and item.sender.lower() != d.recipient.lower(),
             auto_handled=not self.autoreply_status(pid).active,  # a reply that arrives while no permission is active can never be answered automatically later
         )
         return self.store.add_inbound(msg)
@@ -286,13 +287,16 @@ class ConversationService:
         """Under an active permission, answer the newest reply with one fixed follow-up question, or leave it to the user. Returns 1 if a message was queued."""
         st = self.autoreply_status(pid)
         replies = [m for m in self.store.inbound(pid) if m.draft_id == root]
-        if not st.active or not replies or replies[-1].auto_handled:
+        fresh = [m for m in replies if not m.auto_handled]
+        if not st.active or not fresh:
             return 0
-        last = replies[-1]
-        self.store.mark_auto_handled(pid, last.message_id)  # looked at once, whatever the outcome
-        a = last.analysis
-        if any(r.analysis.asks_to_stop for r in replies) or a.questions or a.says_unavailable or last.attachments:
-            return 0  # a person has to read this: a question for you, a refusal, a request to stop, or a file
+        last = fresh[-1]
+        for m in fresh:
+            self.store.mark_auto_handled(pid, m.message_id)  # each reply is looked at once, whatever the outcome
+        if any(r.analysis.asks_to_stop for r in replies):
+            return 0
+        if any(r.analysis.questions or r.analysis.says_unavailable or r.attachments or r.sender_differs for r in fresh):
+            return 0  # a person has to read this: a question (even one an earlier reply in this round asked), a refusal, a file, or an unexpected sender
         req = self.store.get(pid, root)
         options = suggest_followups(replies, self.store.checklists.get(req.category.value, ())) if req else []
         if not options:

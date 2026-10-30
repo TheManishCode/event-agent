@@ -55,8 +55,18 @@ class EventPolicy(_Model):
         EventType.BIRTHDAY.value: (18, 180),
         EventType.CORPORATE.value: (10, 240),
         EventType.CONFERENCE.value: (9, 480),
+        EventType.COMMUNITY.value: (16, 240),  # the fallback; a community event normally takes its window from its subtype profile
         EventType.OTHER.value: (18, 180),
     }
+
+    def event_window(self, request) -> Tuple[int, int]:
+        """(start hour, minutes) of the event. A community event reads it from its profile (data), every other type from ``event_defaults``."""
+        if request.event_type == EventType.COMMUNITY:
+            from eventmate.community import profile_for
+
+            prof = profile_for(request)
+            return prof.start_hour, prof.minutes
+        return self.event_defaults[request.event_type.value]
 
 
 class SchedulingAgent:
@@ -79,7 +89,7 @@ class SchedulingAgent:
         p = self.policy
         now = p.work_start_hour * 60 if now_offset is None else now_offset
         day0 = (request.event_date - origin.date()).days * DAY
-        start_hour, event_minutes = p.event_defaults[request.event_type.value]
+        start_hour, event_minutes = p.event_window(request)
         event_start = day0 + start_hour * 60
         has = set(categories)
         tasks: List[ScheduleTask] = []
@@ -137,6 +147,11 @@ class SchedulingAgent:
         task("event", "Event", event_minutes, fixed_start=event_start, resource="venue", **day)
         for s in setups:
             dep(s, "event", p.setup_buffer_minutes)
+        program = request.community.program if request.community else ()
+        for a in program:  # programme activities share named resources and must sit inside the event; the same CP-SAT model places them
+            task(f"activity_{a.activity_id}", f"Activity: {a.title}", a.minutes, earliest_start=event_start, deadline_end=event_start + event_minutes, prefer="early", resource=f"res_{a.resource}", **day)
+            if a.after:
+                dep(f"activity_{a.after}", f"activity_{a.activity_id}")
         task("teardown", "Teardown", p.teardown_minutes, resource="venue", **day)
         dep("event", "teardown")
 
@@ -153,12 +168,20 @@ class SchedulingAgent:
         tasks = [ScheduleTask.model_validate(t.model_dump()) for t in tasks]
 
         resources = {"organizer": request.organizers, "venue": 1}
+        for a in program:
+            resources[f"res_{a.resource}"] = 1
         if VendorCategory.CATERER in has:
             resources["caterer"] = 1
         if VendorCategory.PHOTOGRAPHER in has:
             resources["photographer"] = 1
         horizon = event_start + event_minutes + p.teardown_minutes + DAY
         return ScheduleSpec(tasks=tuple(tasks), dependencies=tuple(deps), resources=resources, horizon=max(horizon, now + DAY), anchor_task="event")
+
+    def _earliest_event_start(self, categories: Sequence[VendorCategory]) -> int:
+        """Minutes after midnight: venue access, venue setup, then the longest parallel setup, then the buffer."""
+        p = self.policy
+        parallel = max([p.catering_setup_minutes if VendorCategory.CATERER in categories else 0, p.photography_prep_minutes if VendorCategory.PHOTOGRAPHER in categories else 0])
+        return p.venue_access_hour * 60 + p.venue_setup_minutes + parallel + p.setup_buffer_minutes
 
     # ----------------------------------------------------------- results
 
@@ -196,6 +219,28 @@ class SchedulingAgent:
         elif any("reminder_vendor_confirmation" in c for c in core):
             constraint = "vendor_confirmation_window"
             detail = f"vendor confirmation must fall {p.vendor_confirmation_window_end_days}-{p.vendor_confirmation_window_start_days} days before the event; conflicting: {sorted(core)}"
+        elif any("activity_" in c for c in core):
+            constraint = "program_does_not_fit"
+            _, event_minutes = p.event_window(request)
+            totals: Dict[str, int] = {}
+            for a in (request.community.program if request.community else ()):
+                totals[a.resource] = totals.get(a.resource, 0) + a.minutes
+            crowded = sorted((r for r, m in totals.items() if m > event_minutes), key=lambda r: -totals[r])
+            detail = (
+                "; ".join(f"activities on {r} need {totals[r]} minutes but the event lasts {event_minutes}" for r in crowded)
+                if crowded else f"the programme's order and resources do not fit inside the {event_minutes}-minute event; conflicting: {sorted(core)}"
+            )
+            return [ConstraintViolation(
+                constraint=constraint, detail=detail,
+                repair="shorten or remove an activity, move one to another resource, drop a declared order, or lengthen the event window in the community profile",
+            )]
+        elif "fixed:event" in core and self._earliest_event_start(categories) > p.event_window(request)[0] * 60:
+            earliest = self._earliest_event_start(categories)
+            return [ConstraintViolation(
+                constraint="event_start_too_early",
+                detail=f"the event starts at {p.event_window(request)[0]:02d}:00, but venue access opens at {p.venue_access_hour:02d}:00 and setup plus the {p.setup_buffer_minutes}-minute buffer cannot finish before {earliest // 60:02d}:{earliest % 60:02d}",
+                repair=f"start the event at or after {earliest // 60:02d}:{earliest % 60:02d} (edit the event window), or drop the caterer or photographer to shorten setup",
+            )]
         elif any(c.startswith("fixed:") for c in core):
             constraint = "confirmed_booking_timing"
             detail = f"a preserved booking's fixed time conflicts with the schedule; conflicting: {sorted(core)}"

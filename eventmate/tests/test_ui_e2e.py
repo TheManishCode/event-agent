@@ -631,3 +631,151 @@ def test_quote_job_in_the_browser_start_approve_reply_confirm_with_validity(tmp_
     finally:
         srv.shutdown()
     assert [x for x in problems if "status of 4" not in x] == []
+
+
+def test_ideas_tab_suggests_labels_pins_and_dismisses_without_touching_the_plan(tmp_path):
+    em = EventMate(log_dir=tmp_path / "l", plan_dir=tmp_path / "p", run_id="ideasui", require_symbolic=False)
+    pid = em.plan(EXAMPLE, today=TODAY).plan.plan_id
+    before = (em.store.latest(pid), len(em.store.versions(pid)))
+    srv = make_server("127.0.0.1", 0, create_app(em, today_fn=lambda: TODAY, poll_seconds=0), threaded=True)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    problems = []
+    try:
+        with pw.sync_playwright() as p:
+            browser = p.chromium.launch(executable_path=CHROMIUM, args=["--no-sandbox"])
+            page = browser.new_page(viewport={"width": 1300, "height": 900})
+            page.on("console", lambda m: problems.append(m.text) if m.type in ("error", "warning") else None)
+            page.goto(f"http://127.0.0.1:{srv.server_port}")
+            page.wait_for_selector("#hero h1", timeout=30000)
+            page.click("#tab-ideas")
+            page.wait_for_selector("#ideas-go", timeout=30000)
+            assert "Suggestions, not verified offers" in page.inner_text("#ideas-notice") and page.locator(".idea").count() == 0
+            page.fill("#ideas-prefs", "rustic")
+            page.click("#ideas-go")
+            page.wait_for_selector(".idea", timeout=30000)
+            n = page.locator(".idea").count()
+            assert 6 <= n <= 10 and "INR" not in page.inner_text("#ideas") and "built-in templates" in page.inner_text("#ideas")
+            page.locator(".idea .pin").first.click()
+            page.wait_for_selector("#notes .note", timeout=30000)
+            assert page.locator(".idea .tag:has-text('pinned')").count() == 1
+            page.locator(".idea .dismiss").nth(1).click()
+            page.wait_for_selector("#ideas >> text=1 dismissed", timeout=30000)
+            assert page.locator(".idea").count() == n - 1 and "1 dismissed" in page.inner_text("#ideas")
+            page.locator("#notes input[type=checkbox]").first.check()
+            page.wait_for_selector("#notes input[type=checkbox]:checked", timeout=30000)
+            browser.close()
+    finally:
+        srv.shutdown()
+    assert [x for x in problems if "status of 4" not in x] == []
+    assert (em.store.latest(pid), len(em.store.versions(pid))) == before and em.ideas.notes(pid)[0].done
+
+
+def test_community_tab_shows_checks_refuses_with_repairs_and_lets_only_the_user_mark_items(tmp_path):
+    em = EventMate(log_dir=tmp_path / "l", plan_dir=tmp_path / "p", run_id="commui", require_symbolic=False)
+    pid = em.plan("Plan a 150-person college fest in Pune on December 12 under INR 250,000. Venue and catering.", today=TODAY).plan.plan_id
+    em.plan("Plan a 120-person wedding in Pune on December 12 under INR 500,000. Venue and catering.", today=TODAY)
+    srv = make_server("127.0.0.1", 0, create_app(em, today_fn=lambda: TODAY, poll_seconds=0), threaded=True)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    problems = []
+    try:
+        with pw.sync_playwright() as p:
+            browser = p.chromium.launch(executable_path=CHROMIUM, args=["--no-sandbox"])
+            page = browser.new_page(viewport={"width": 1300, "height": 1000})
+            page.on("console", lambda m: problems.append(m.text) if m.type in ("error", "warning") else None)
+            page.goto(f"http://127.0.0.1:{srv.server_port}")
+            page.wait_for_selector(".plan-item", timeout=30000)
+            page.locator(".plan-item", has_text="Wedding").click()
+            page.wait_for_selector("#hero h1:has-text('Wedding')", timeout=30000)
+            assert page.locator("#tab-community").count() == 0  # only community plans have the tab
+            page.locator(".plan-item", has_text="Community").click()
+            page.wait_for_selector("#hero h1:has-text('Community')", timeout=30000)
+            page.wait_for_selector("#tab-community", timeout=30000)
+            page.click("#tab-community")
+            page.wait_for_selector("#c-summary", timeout=30000)
+            assert page.inner_text("#c-summary") == "11 conditional items not verified"
+            text = page.inner_text("#community").lower()
+            import re
+
+            assert "college fest" in text and "not reviewed" in text and "does not verify" in text and not re.search(r"\b(?:safe|compliant|compliance)\b", text)
+            assert "Attendance Vs Capacity" in page.inner_text("#c-checks") and "Setup Cleanup Owners" in page.inner_text("#c-unverified")
+            # a failing save shows what failed and how to fix it, and saves nothing
+            page.fill("#c-own", "100000")
+            page.click("#c-save")
+            page.wait_for_selector("#c-errors:not([hidden])", timeout=30000)
+            err = page.inner_text("#c-errors")
+            assert "Funding Vs Budget" in err and "Short by INR 57,500" in err and "To fix" in err
+            assert em.store.latest(pid).version == 1
+            # fixed: the saved version is checked, the tab reloads on it
+            page.fill("#c-own", "160000")
+            page.click("#c-save")
+            page.wait_for_selector("#c-summary", timeout=30000)
+            page.wait_for_selector("#toast:has-text('Saved as version 2')", timeout=30000)
+            assert em.store.latest(pid).version == 2 and em.store.latest(pid).request.community.own_funds_inr == 160000
+            # only the user can mark an item; a name is needed
+            page.click("#tab-community")
+            page.wait_for_selector(".cond", timeout=30000)
+            page.locator(".cond[data-item='venue_permission'] .confirm-item").click()
+            page.wait_for_selector("#c-msg:not(:empty)", timeout=30000)
+            assert em.community_status(pid, today=TODAY).not_verified == 11
+            page.locator(".cond[data-item='venue_permission'] input[aria-label='Your name']").fill("Asha")
+            page.locator(".cond[data-item='venue_permission'] input[aria-label='Note']").fill("email from the hall manager")
+            page.locator(".cond[data-item='venue_permission'] .confirm-item").click()
+            page.wait_for_selector("#c-summary:has-text('10 conditional items not verified')", timeout=30000)
+            assert "Recorded by Asha" in page.inner_text(".cond[data-item='venue_permission']")
+            browser.close()
+    finally:
+        srv.shutdown()
+    assert [x for x in problems if "status of 4" not in x] == []
+
+
+def test_updates_inbox_and_the_two_step_email_copy_in_the_browser(tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    from eventmate.conversations import SendPolicy
+    from eventmate.schemas import VendorCategory as C
+    from eventmate.tests.mailfake import MailWorld
+
+    now = datetime.now(timezone.utc)
+    world = MailWorld(lambda: now)
+    em = EventMate(log_dir=tmp_path / "l", plan_dir=tmp_path / "p", run_id="updui", channels={"email": world.channel(), "whatsapp": FakeChannel("whatsapp", False, False)}, require_symbolic=False)
+    em.conversations.policy = SendPolicy(per_vendor_per_day=10, per_day=50, whatsapp_gap_s=0)
+    pid = em.plan("Plan a 150-person college fest in Pune on December 12 under INR 250,000. Venue and catering.", today=TODAY).plan.plan_id
+    job = em.jobs.start_job(pid, C.CATERER, {"cat-pune-annapurna": ("email", "a@annapurna.test"), "cat-pune-rasoi": ("email", "r@rasoi.test")}, "2 caterer quotes", now + timedelta(days=7), "Asha", min_quotes=2)
+    em.jobs.approve_requests(job.job_id)
+    srv = make_server("127.0.0.1", 0, create_app(em, today_fn=lambda: TODAY, poll_seconds=0), threaded=True)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    problems = []
+    try:
+        with pw.sync_playwright() as p:
+            browser = p.chromium.launch(executable_path=CHROMIUM, args=["--no-sandbox"])
+            page = browser.new_page(viewport={"width": 1300, "height": 1000})
+            page.on("console", lambda m: problems.append(m.text) if m.type in ("error", "warning") else None)
+            page.goto(f"http://127.0.0.1:{srv.server_port}")
+            page.wait_for_selector("#hero h1", timeout=30000)
+            page.click("#tab-talk")
+            page.wait_for_selector("#updates .digest", timeout=30000)
+            assert "2 caterer quotes" in page.inner_text("#updates")
+            page.locator("#updates .digest button:has-text('Mark read')").first.click()
+            page.wait_for_selector("#updates .digest[data-unread='false']", timeout=30000)
+            # the email copy is off; turning it on is two steps and shows exactly what will happen
+            assert "Off." in page.inner_text("#notify") and world.sent_to("owner@personal.test") == []
+            page.fill("#notify-to", "nobody")
+            page.click("#notify-review")
+            page.wait_for_selector("#notify-msg:not(:empty)", timeout=30000)
+            page.fill("#notify-to", "owner@personal.test")
+            page.check("#notify input[aria-label='confirmed amounts']")
+            page.click("#notify-review")
+            page.wait_for_selector("#notify-summary", timeout=30000)
+            summary = page.inner_text("#notify-summary")
+            assert "owner@personal.test" in summary and "confirmed amounts" in summary and "vendor message text" in summary and "budget" in summary.lower()
+            assert em.notifier.status().state == "pending"  # nothing is on until the owner confirms
+            page.click("#notify-confirm")
+            page.wait_for_selector("#notify-state", timeout=30000)
+            assert "owner@personal.test and no one else" in page.inner_text("#notify-state") and em.notifier.status().state == "on"
+            page.click("#notify-off")
+            page.wait_for_selector("#notify-review", timeout=30000)
+            assert em.notifier.status().state == "off"
+            browser.close()
+    finally:
+        srv.shutdown()
+    assert [x for x in problems if "status of 4" not in x] == []

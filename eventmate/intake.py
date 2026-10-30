@@ -21,10 +21,12 @@ from pydantic import Field, ValidationError, field_validator
 from eventmate.agents import manager as mgr
 from eventmate.netutil import loads
 from eventmate.llm import LLMClient, PromptError, PromptStore
+from eventmate.community import load_profiles, match_subtype
 from eventmate.logs import RunLogs
 from eventmate.schemas import (
     MAX_BUDGET_INR,
     MAX_GUESTS,
+    CommunityDetails,
     DietaryRequirement,
     EventRequest,
     EventType,
@@ -39,7 +41,7 @@ MAX_MESSAGES = 20
 MAX_MESSAGE_CHARS = mgr.MAX_TEXT_CHARS
 _MAX_TOKENS = 600
 REQUIRED = ("guest_count", "city", "event_date", "budget_total")
-FIELDS = tuple(f for f in ("event_type", "guest_count", "city", "event_date", "budget_total", "dietary", "venue_setting", "services", "reminders"))
+FIELDS = tuple(f for f in ("event_type", "community_subtype", "guest_count", "city", "event_date", "budget_total", "dietary", "venue_setting", "services", "reminders"))
 _CITY = re.compile(r"[^\W\d_](?:[^\W\d_]|[ .'-])*")  # letters, spaces, . ' - only
 MAX_CITY_WORDS, MAX_CITY_CHARS = 3, 40  # "Navi Mumbai" fits; a sentence or payload does not
 _QUESTIONS = {
@@ -66,6 +68,7 @@ class IntakeDraft(_Model):
     """What we know so far. Every field may be missing; a draft is never a plan input until confirmed."""
 
     event_type: Optional[EventType] = None
+    community_subtype: Optional[str] = Field(default=None, pattern=r"^[a-z0-9_]{1,40}$")  # one of the community profiles (data), only for a community event
     guest_count: Optional[int] = Field(default=None, ge=1, le=MAX_GUESTS)
     city: Optional[str] = Field(default=None, min_length=1, max_length=80)
     event_date: Optional[date] = None
@@ -76,6 +79,13 @@ class IntakeDraft(_Model):
     reminders: Tuple[ReminderKind, ...] = ()
 
     _check = field_validator("city")(_plain)
+
+    @field_validator("community_subtype")
+    @classmethod
+    def _subtype_known(cls, v):
+        if v is not None and v not in load_profiles().profiles:
+            raise ValueError("unknown community subtype")
+        return v
 
     @field_validator("city")
     @classmethod
@@ -134,6 +144,12 @@ def _rule_draft(text: str, today: date, notes: List[str], choices: List[IntakeCh
     if 1 < len(budgets) <= 6:
         choices.append(IntakeChoice(field="budget_total", prompt="Which budget is right?", options=tuple(b.replace(",", "") for b in budgets)))
     event_type = next((et for rx, et in mgr._EVENT_TYPES if rx.search(t)), None)
+    subtype = None
+    if event_type is None and (hit := match_subtype(t)) is not None:
+        event_type, subtype = EventType.COMMUNITY, hit[0]
+        label = load_profiles().get(subtype).label
+        if "community" not in hit[1]:
+            notes.append(f"I read this as a community event ({label}) because you wrote '{hit[1]}'. Please check that it is right.")
     wants_in, wants_out = mgr._mentioned(mgr._INDOOR, t), mgr._mentioned(mgr._OUTDOOR, t)
     setting = VenueSetting.INDOOR if wants_in and not wants_out else VenueSetting.OUTDOOR if wants_out and not wants_in else None
     services = [VendorCategory.VENUE] if re.search(r"\bvenue\b", t, re.I | re.A) else []
@@ -149,6 +165,7 @@ def _rule_draft(text: str, today: date, notes: List[str], choices: List[IntakeCh
             reminders.append(ReminderKind.VENDOR_CONFIRMATION)
     return _safe_draft(
         event_type=event_type,
+        community_subtype=subtype,
         guest_count=guests,
         city=city,
         event_date=when,
@@ -215,6 +232,7 @@ def _llm_draft(llm: LLMClient, prompts: PromptStore, logs: RunLogs, message: str
         body.replace("{today}", today.isoformat())
         .replace("{draft}", prior.model_dump_json(exclude_none=True))
         .replace("{message}", _FENCE.sub("", message))
+        .replace("{community_subtypes}", ", ".join(load_profiles().profiles))
     )
     started = time.perf_counter()
     output, reason, draft = "", None, None
@@ -275,6 +293,10 @@ def propose(
             source, new = f"llm:{getattr(llm, 'name', 'unknown')}"[:80], _merge(rules, ai)  # the parser's reading is the baseline
             flags = tuple(f for f in FIELDS if _uncorroborated(getattr(ai, f), getattr(rules, f)))
     draft = _merge(prior, new)
+    if rules.event_type == EventType.COMMUNITY and any("I read this as a community event" in n for n in notes) and "event_type" not in flags:
+        flags = tuple(flags) + ("event_type",)  # inferred from a keyword, not stated: the review card asks the user to check it
+    if draft.event_type != EventType.COMMUNITY and draft.community_subtype is not None:
+        draft = draft.model_copy(update={"community_subtype": None})
     if choices:  # an ambiguity in the user's own words is theirs to settle: no earlier or AI-picked value stands in
         draft = draft.model_copy(update={c.field: None for c in choices})
     cities = {c.lower() for c in known}
@@ -323,6 +345,11 @@ def to_request(draft: IntakeDraft, raw_text: str, today: date, source: str = "ru
     event_type = draft.event_type or EventType.OTHER
     if draft.event_type is None:
         assumptions.append("event type not given; treated as 'other'")
+    community = None
+    if event_type == EventType.COMMUNITY:
+        community = CommunityDetails(subtype=draft.community_subtype or load_profiles().default)
+        if draft.community_subtype is None:
+            assumptions.append(f"community subtype not specified; using '{community.subtype}'")
     setting = draft.venue_setting or VenueSetting.ANY
     if draft.venue_setting is None:
         assumptions.append("venue setting not specified; any setting accepted")
@@ -341,6 +368,7 @@ def to_request(draft: IntakeDraft, raw_text: str, today: date, source: str = "ru
             reminders=draft.reminders,
             assumptions=tuple(assumptions),
             parse_confidence=round(max(0.3, 1.0 - 0.1 * (len(assumptions) - 1)), 2),
+            community=community,
         )
     except ValidationError as exc:
         raise IntakeError("; ".join(e["msg"] for e in exc.errors())) from exc

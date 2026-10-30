@@ -6,7 +6,7 @@ from datetime import date, timedelta
 
 import pytest
 
-from eventmate.schemas import BookingStatus, Disruption, DisruptionKind as K
+from eventmate.schemas import BookingStatus, CommunityDetails, Disruption, DisruptionKind as K
 from eventmate.service import EventMate
 from eventmate.tests.conftest import EXAMPLE, TODAY
 
@@ -22,6 +22,8 @@ def random_disruption(rnd, plan, today):
         return Disruption(kind=kind, vendor_id=rnd.choice(pool), override_confirmed=over)
     if kind == K.BUDGET_CHANGE:
         return Disruption(kind=kind, new_budget=rnd.choice([50_000, 100_000, 140_000, 150_000, 200_000, 400_000, 10_000_000]), override_confirmed=over)
+    if kind == K.COMMUNITY_UPDATE:  # the plan is not a community event: it must be refused cleanly, never crash or change anything
+        return Disruption(kind=kind, new_community=CommunityDetails(), override_confirmed=over)
     if kind == K.GUEST_COUNT_CHANGE:
         return Disruption(kind=kind, new_guest_count=rnd.choice([1, 40, 90, 100, 120, 140, 145, 180, 500]), override_confirmed=over)
     return Disruption(kind=kind, new_date=today + timedelta(days=rnd.choice([-5, 0, 1, 7, 14, 20, 43, 50, 49, 60, 400, 4000])), override_confirmed=over)

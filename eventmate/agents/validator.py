@@ -13,6 +13,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Iterable, List, Optional, Tuple
 
+from eventmate import community
 from eventmate.agents.budget import BudgetPolicy, compute_allocation
 from eventmate.agents.guest import GuestAgent
 from eventmate.agents.scheduler import DAY, EventPolicy
@@ -54,6 +55,12 @@ REPAIRS = {
     "invitation_lead_time": "choose a later event date or fewer lead-time days",
     "confirmed_bookings_preserved": "keep the confirmed booking, or explicitly override it",
     "confirmed_booking_time_preserved": "keep the confirmed booking's original time",
+    "community_profile": "choose one of the known community subtypes listed in the detail, or add it to the community profile file",
+    "attendance_vs_capacity": "choose a venue that holds the top of the attendance range, or lower the range",
+    "funding_vs_budget": "record funds as received, opt in to counting committed funds (it is then shown as such), or lower the budget to what the funding covers",
+    "volunteer_coverage": "assign more volunteers to the uncovered role, remove the double booking, or name the missing setup or cleanup owner",
+    "timeline_dependencies": "shorten or reorder the programme so setup ends before doors, cleanup follows the close, and no resource is used twice at once",
+    "accessibility_declared": "choose a venue that declares the needed access, or ask the venue again and record its answer",
 }
 
 
@@ -89,6 +96,8 @@ class ValidatorAgent:
         checks += self._schedule(draft)
         checks += self._policy_rules(draft)
         checks += self._symbolic(draft, warnings)
+        community_checks, unverified = community.evaluate(draft, self.repo, self.policy)
+        checks += community_checks
         if parent is not None:
             checks += self._preservation(draft, parent, released)
         warnings = list(dict.fromkeys(list(draft.warnings) + warnings))
@@ -98,7 +107,7 @@ class ValidatorAgent:
             for c in checks
             if not c.passed
         ]
-        report = ValidationReport(passed=not violations, checks=tuple(checks), violations=tuple(violations), warnings=tuple(warnings))
+        report = ValidationReport(passed=not violations, checks=tuple(checks), violations=tuple(violations), warnings=tuple(warnings), unverified=tuple(unverified))
         self._log(draft, report)
         return report
 
@@ -160,7 +169,7 @@ class ValidatorAgent:
     def _policy_structure(self, d: PlanDraft) -> List[ConstraintCheck]:
         """The spec is part of the draft, so it cannot be trusted: compare it with the policy."""
         p = self.policy
-        _, event_minutes = p.event_defaults[d.request.event_type.value]
+        _, event_minutes = p.event_window(d.request)
         want = {
             "book_venue": (p.booking_minutes, "organizer"),
             "venue_setup": (p.venue_setup_minutes, "venue"),
@@ -178,6 +187,8 @@ class ValidatorAgent:
             want["send_invitations"] = (p.send_invitations_minutes, "organizer")
         if ReminderKind.VENDOR_CONFIRMATION in d.request.reminders:
             want["reminder_vendor_confirmation"] = (p.reminder_minutes, "organizer")
+        for a in (d.request.community.program if d.request.community else ()):
+            want[f"activity_{a.activity_id}"] = (a.minutes, f"res_{a.resource}")
         problems = []
         have = {t.id: (t.duration, t.resource) for t in d.spec.tasks}
         for tid, exp in want.items():
@@ -231,6 +242,7 @@ class ValidatorAgent:
             ids |= {"reminder_invitation", "send_invitations"}
         if ReminderKind.VENDOR_CONFIRMATION in d.request.reminders:
             ids |= {"reminder_vendor_confirmation"}
+        ids |= {f"activity_{a.activity_id}" for a in (d.request.community.program if d.request.community else ())}
         return ids
 
     @staticmethod
@@ -253,7 +265,7 @@ class ValidatorAgent:
         """Business rules re-derived from the request, not read back from the spec."""
         p, e = self.policy, {x.task_id: x for x in d.solution.entries}
         day0 = (d.request.event_date - d.origin.date()).days * DAY
-        hour, minutes = p.event_defaults[d.request.event_type.value]
+        hour, minutes = p.event_window(d.request)
         out: List[ConstraintCheck] = []
         ev = e.get("event")
         out.append(_chk("event_time", ev is not None and ev.start == day0 + hour * 60 and ev.end - ev.start == minutes, f"event must run {hour:02d}:00 for {minutes} min on {d.request.event_date.isoformat()}"))
