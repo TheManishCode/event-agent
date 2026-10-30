@@ -22,7 +22,7 @@ from eventmate.channels import Channel, ChannelError, Inbound, KnownThread, Outc
 from eventmate.deals import extract_mentions
 from eventmate.outreach import OutreachStore
 from eventmate.schemas import (
-    AmountMention, ConversationThread, Inbox, InboundMessage, OutreachDraft, PlanVersion, PollResult, ReplyAnalysis,
+    AmountMention, AutoreplyStatus, ConversationThread, Inbox, InboundMessage, Mandate, OutreachDraft, PlanVersion, PollResult, ReplyAnalysis,
 )
 
 LEASE = timedelta(minutes=5)  # a send claimed longer ago than this and never finished is recorded as unknown
@@ -33,6 +33,12 @@ _UNAVAILABLE = re.compile(
     r"cannot (?:do|make|cater|accommodate|take)|can'?t (?:do|make|cater|accommodate|take))\b", re.I,
 )
 _AVAILABLE = re.compile(r"\b(?:available|we can do|we are free|slot is (?:open|free)|date is (?:open|free))\b", re.I)
+_STOP = re.compile(
+    r"\b(?:stop (?:messaging|contacting|texting|sending|calling|emailing)|(?:don'?t|do not|never) (?:message|contact|text|call|email|write to)|unsubscribe|wrong number|not interested|remove (?:me|my number|my email))\b|^\s*stop[.!\s]*$",
+    re.I,
+)
+_VALIDITY = re.compile(r"\b(?:valid|validity|expires?|expiry|until|till)\b", re.I)
+IST = timezone(timedelta(hours=5, minutes=30))  # India has no daylight saving; the sending window is in IST
 _SENTENCE = re.compile(r"(?<=[.!?])\s+|\n+")
 
 
@@ -56,7 +62,7 @@ def analyze_reply(body: str, checklist: Sequence[str]) -> ReplyAnalysis:
     questions = tuple(s.strip()[:200] for s in _SENTENCE.split(body) if s.strip().endswith("?"))[:5]
     text = _norm(body)
     return ReplyAnalysis(
-        amounts=amounts, says_unavailable=unavailable, says_available=bool(_AVAILABLE.search(body)) and not unavailable, questions=questions,
+        amounts=amounts, says_unavailable=unavailable, says_available=bool(_AVAILABLE.search(body)) and not unavailable, questions=questions, asks_to_stop=bool(_STOP.search(body)),
         checklist_mentioned=tuple(item for item in checklist if _norm(item) in text),
     )
 
@@ -77,7 +83,8 @@ def suggest_followups(thread_replies: Sequence[InboundMessage], checklist: Seque
             out.append("Thank you. Could you also tell me whether each of these is included or extra: " + ", ".join(missing) + "?")
     if not last.says_available:
         out.append("Could you confirm that you are available on the date in my first message?")
-    out.append("Could you tell me how long this quote is valid, and any charges not mentioned so far (taxes, overtime, travel)?")
+    if not _VALIDITY.search(thread_replies[-1].body):
+        out.append("Could you tell me how long this quote is valid, and any charges not mentioned so far (taxes, overtime, travel)?")
     return out[:4]
 
 
@@ -88,6 +95,7 @@ class ConversationService:
     ):
         self.store, self.channels, self.plan_lookup, self.policy, self.now = store, channels, plan_lookup, policy, now
         self._last_whatsapp: Optional[datetime] = None
+        self.guards: List[Callable[[OutreachDraft], Optional[str]]] = []  # each may veto an automatic send at dispatch time (for example: its job was cancelled)
 
     # ------------------------------------------------------------ approval
 
@@ -133,6 +141,19 @@ class ConversationService:
                     self.store.transition(pid, d.draft_id, ("sending",), status="outcome_unknown", error="the app stopped while sending; check the vendor chat before trying again")
         for pid in self.store.plan_ids():
             for d in [x for x in self.store.list(pid) if x.status == "approved"]:
+                if d.approved_by == "mandate":
+                    veto = next((why for why in (g(d) for g in self.guards) if why), None)
+                    if veto:
+                        self.store.transition(pid, d.draft_id, ("approved",), status="denied", error=veto[:300])
+                        continue
+                    st = self.autoreply_status(pid)
+                    if not st.active:  # revoked, expired or killed after the message was queued: it never goes out
+                        self.store.transition(pid, d.draft_id, ("approved",), status="denied", error="the standing permission ended before this was sent")
+                        continue
+                    local = now.astimezone(IST).hour
+                    if not st.mandate.window_start <= local < st.mandate.window_end:
+                        waiting.append(f"{d.vendor_name}: automatic messages wait for the sending window ({st.mandate.window_start:02d}:00-{st.mandate.window_end:02d}:00 IST)")
+                        continue
                 recent = self._sent_since(day)
                 if len(recent) >= self.policy.per_day:
                     waiting.append(f"daily limit of {self.policy.per_day} messages reached")
@@ -176,10 +197,11 @@ class ConversationService:
         return [(pid, d) for pid in self.store.plan_ids() for d in self.store.list(pid) if d.status == "sent" and d.sent_at is not None and d.sent_at >= since]
 
     def poll(self) -> PollResult:
-        """Send what is due, then read every channel for replies to what was sent. A failing channel is reported, not fatal."""
+        """Send what is due, read every channel for replies, let a standing permission answer routine ones, then send again. A failing channel is reported, not fatal."""
         sent, waiting = self.dispatch()
         sent_drafts = self._threads()
         new = ignored = 0
+        touched: List[Tuple[str, str]] = []
         errors: List[str] = []
         for name, channel in self.channels.items():
             known = {}
@@ -200,10 +222,16 @@ class ConversationService:
                 if match is None:
                     ignored += 1
                     continue
-                if self._store(item, *match):
+                stored = self._store(item, *match)
+                if stored is not None:
                     new += 1
+                    touched.append((match[0], stored.draft_id))
                 else:
                     ignored += 1
+        queued = sum(self._auto_reply(pid, root) for pid, root in dict.fromkeys(touched))
+        if queued:
+            more, waiting = self.dispatch()
+            sent += more
         return PollResult(new_messages=new, ignored=ignored, sent=sent, waiting=tuple(waiting), errors=tuple(errors))
 
     @staticmethod
@@ -217,14 +245,81 @@ class ConversationService:
         same = [(p, d) for p, d in candidates if d.recipient.lower() == item.sender.lower() and item.received_at >= d.sent_at - timedelta(seconds=60)]
         return max(same, key=lambda pd: pd[1].sent_at) if same else None
 
-    def _store(self, item: Inbound, pid: str, d: OutreachDraft) -> bool:
+    def _store(self, item: Inbound, pid: str, d: OutreachDraft) -> Optional[InboundMessage]:
         checklist = self.store.checklists.get(d.category.value, ())
         msg = InboundMessage(
             message_id=uuid.uuid4().hex, plan_id=pid, draft_id=d.parent_id or d.draft_id, vendor_id=d.vendor_id, vendor_name=d.vendor_name, category=d.category,
             channel=item.channel, sender=item.sender, received_at=item.received_at, external_id=item.external_id, body=item.body, truncated=item.truncated,
             attachments=item.attachments, analysis=analyze_reply(item.body, checklist),
+            auto_handled=not self.autoreply_status(pid).active,  # a reply that arrives while no permission is active can never be answered automatically later
         )
-        return self.store.add_inbound(msg) is not None
+        return self.store.add_inbound(msg)
+
+    # ------------------------------------------------------------ standing permission (ADR-043)
+
+    def grant_autoreply(self, plan_id: str, sender_name: str, hours: int = 72, max_per_thread: int = 3, max_total: int = 10) -> Mandate:
+        self.plan_lookup(plan_id)
+        if self.store.killed:
+            raise ValueError("the kill switch is on; resume automatic replies first")
+        if not isinstance(hours, int) or isinstance(hours, bool) or not 1 <= hours <= 168:
+            raise ValueError("hours must be a whole number from 1 to 168")
+        now = self.now()
+        return self.store.set_mandate(Mandate(plan_id=plan_id, sender_name=sender_name, granted_at=now, expires_at=now + timedelta(hours=hours), max_per_thread=max_per_thread, max_total=max_total))
+
+    def revoke_autoreply(self, plan_id: str) -> AutoreplyStatus:
+        self.plan_lookup(plan_id)
+        self.store.revoke_mandate(plan_id)
+        return self.autoreply_status(plan_id)
+
+    def kill_all(self) -> None:
+        self.store.set_killed(True)
+
+    def resume_all(self) -> None:
+        self.store.set_killed(False)
+
+    def autoreply_status(self, plan_id: str) -> AutoreplyStatus:
+        m, killed = self.store.mandate(plan_id), self.store.killed
+        used = sum(1 for d in self.store.list(plan_id) if d.approved_by == "mandate" and d.status != "denied")
+        return AutoreplyStatus(plan_id=plan_id, active=bool(m and not killed and m.active_at(self.now())), killed=killed, mandate=m, sent_total=used)
+
+    def _auto_reply(self, pid: str, root: str) -> int:
+        """Under an active permission, answer the newest reply with one fixed follow-up question, or leave it to the user. Returns 1 if a message was queued."""
+        st = self.autoreply_status(pid)
+        replies = [m for m in self.store.inbound(pid) if m.draft_id == root]
+        if not st.active or not replies or replies[-1].auto_handled:
+            return 0
+        last = replies[-1]
+        self.store.mark_auto_handled(pid, last.message_id)  # looked at once, whatever the outcome
+        a = last.analysis
+        if any(r.analysis.asks_to_stop for r in replies) or a.questions or a.says_unavailable or last.attachments:
+            return 0  # a person has to read this: a question for you, a refusal, a request to stop, or a file
+        req = self.store.get(pid, root)
+        options = suggest_followups(replies, self.store.checklists.get(req.category.value, ())) if req else []
+        if not options:
+            return 0  # nothing left to ask
+        return 1 if self.queue_automatic(pid, root, options[0], f"reply:{last.message_id}")[0] is not None else 0
+
+    def queue_automatic(self, pid: str, root: str, text: str, action_key: str) -> Tuple[Optional[OutreachDraft], str]:
+        """The one way anything is sent without a per-message approval (ADR-043, ADR-044): checks the standing permission and its caps, marks the
+        draft as automatic with the disclosure line, and leaves the rest (window, kill switch, send limits) to dispatch. Returns (draft, reason)."""
+        st = self.autoreply_status(pid)
+        if st.killed:
+            return None, "the kill switch is on"
+        if not st.active:
+            return None, "no standing permission is active for this plan"
+        mine = [d for d in self.store.list(pid) if d.approved_by == "mandate" and d.status != "denied"]
+        if sum(1 for d in mine if d.parent_id == root) >= st.mandate.max_per_thread:
+            return None, f"the limit of {st.mandate.max_per_thread} automatic messages for this vendor is reached"
+        if len(mine) >= st.mandate.max_total:
+            return None, f"the limit of {st.mandate.max_total} automatic messages for this plan is reached"
+        try:
+            draft = self.store.followup(pid, root, text, st.mandate.sender_name, automated=True, action_key=action_key)
+        except ValueError as exc:
+            if "already claimed" in str(exc):
+                return None, "another action already claimed this response"
+            raise
+        self.store.transition(pid, draft.draft_id, ("prepared",), status="approved", approved_by="mandate", decided_at=self.now())
+        return self.store.get(pid, draft.draft_id), ""
 
     # ------------------------------------------------------------ the user's view
 

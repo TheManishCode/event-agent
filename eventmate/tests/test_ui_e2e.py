@@ -522,3 +522,112 @@ def test_vendor_scores_card_shows_the_formula_for_recorded_quotes(tmp_path):
         srv.shutdown()
     assert [x for x in problems if "status of 4" not in x] == []
     assert em.store.latest(pid).total_cost == before
+
+
+def test_standing_permission_answers_a_reply_by_itself_and_the_kill_switch_stops_it(tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    from eventmate.channels import Inbound
+    from eventmate.conversations import SendPolicy
+    from eventmate.schemas import VendorCategory as C
+
+    chans = {"email": FakeChannel("email"), "whatsapp": FakeChannel("whatsapp")}
+    em = EventMate(log_dir=tmp_path / "l", plan_dir=tmp_path / "p", run_id="auto", channels=chans)
+    em.conversations.policy = SendPolicy(per_vendor_per_day=10, per_day=50, whatsapp_gap_s=0)
+    # the sending window is 09:00-20:00 IST; pin the clock inside it so the test does not depend on the hour it runs
+    fixed = datetime(2026, 10, 30, 9, 0, tzinfo=timezone.utc)
+    em.outreach_store.now = em.conversations.now = lambda: fixed
+    pid = em.plan(EXAMPLE, today=TODAY).plan.plan_id
+    d = em.draft_outreach(pid, C.CATERER, "email", "sales@annapurna.in", "Asha")
+    em.approve_outreach(pid, d.draft_id, d.content_hash)
+    srv = make_server("127.0.0.1", 0, create_app(em, today_fn=lambda: TODAY, poll_seconds=0), threaded=True)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    problems = []
+    try:
+        with pw.sync_playwright() as p:
+            browser = p.chromium.launch(executable_path=CHROMIUM, args=["--no-sandbox"])
+            page = browser.new_page(viewport={"width": 1300, "height": 900})
+            page.on("console", lambda m: problems.append(m.text) if m.type in ("error", "warning") else None)
+            page.goto(f"http://127.0.0.1:{srv.server_port}")
+            page.wait_for_selector("#hero h1", timeout=30000)
+            page.click("#tab-talk")
+            page.wait_for_selector("#a-on", timeout=30000)
+            assert "off" in page.inner_text("#autoreply") and page.locator("#a-kill").count() == 1
+            page.click("#a-on")
+            page.wait_for_selector("#o-msg:not(:empty)", timeout=30000)  # no name yet: refused with a reason
+            page.fill("#o-by", "Asha")
+            page.click("#a-on")
+            page.wait_for_selector("#a-off", timeout=30000)
+            assert "on until" in page.inner_text("#autoreply")
+            chans["email"].inbox = [Inbound(channel="email", sender="sales@annapurna.in", external_id="<r1>", received_at=fixed + timedelta(minutes=5), body="Hello, yes we can do it.")]
+            page.click("#o-poll")
+            page.wait_for_selector(".msg.out .tag:has-text('sent automatically')", timeout=30000)
+            assert len(chans["email"].sent) == 2 and "automated assistant" in chans["email"].sent[1][2]
+            page.click("#a-kill")
+            page.wait_for_selector("#a-resume", timeout=30000)
+            assert "stopped" in page.inner_text("#autoreply")
+            chans["email"].inbox = [Inbound(channel="email", sender="sales@annapurna.in", external_id="<r2>", received_at=fixed + timedelta(minutes=9), body="Noted, thank you.")]
+            page.click("#o-poll")
+            page.wait_for_selector(".msg.in:has-text('Noted, thank you.')", timeout=30000)
+            assert len(chans["email"].sent) == 2  # the kill switch held
+            browser.close()
+    finally:
+        srv.shutdown()
+    assert [x for x in problems if "status of 4" not in x] == []
+
+
+def test_quote_job_in_the_browser_start_approve_reply_confirm_with_validity(tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    from eventmate.channels import Inbound
+    from eventmate.conversations import SendPolicy
+
+    chans = {"email": FakeChannel("email"), "whatsapp": FakeChannel("whatsapp")}
+    em = EventMate(log_dir=tmp_path / "l", plan_dir=tmp_path / "p", run_id="jobui", channels=chans, require_symbolic=False)
+    em.conversations.policy = SendPolicy(per_vendor_per_day=10, per_day=50, whatsapp_gap_s=0)
+    vendors = {"cat-pune-annapurna": "a@annapurna.test", "cat-pune-rasoi": "r@rasoi.test", "cat-pune-spice": "s@spice.test"}
+    for vid, to in vendors.items():
+        em.set_vendor_contact(vid, to, None, "email")
+    em.plan(EXAMPLE, today=TODAY)
+    srv = make_server("127.0.0.1", 0, create_app(em, today_fn=lambda: TODAY, poll_seconds=0), threaded=True)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    problems = []
+    try:
+        with pw.sync_playwright() as p:
+            browser = p.chromium.launch(executable_path=CHROMIUM, args=["--no-sandbox"])
+            page = browser.new_page(viewport={"width": 1300, "height": 900})
+            page.on("console", lambda m: problems.append(m.text) if m.type in ("error", "warning") else None)
+            page.goto(f"http://127.0.0.1:{srv.server_port}")
+            page.wait_for_selector("#hero h1", timeout=30000)
+            page.click("#tab-talk")
+            page.wait_for_selector("#j-start", timeout=30000)
+            for vid in vendors:
+                page.check(f"#jobs input[value='{vid}']")
+            page.click("#j-start")
+            page.wait_for_selector("#o-msg:not(:empty)", timeout=30000)  # no name yet
+            page.fill("#o-by", "Asha")
+            page.click("#j-start")
+            page.wait_for_selector(".job [data-item='approve_requests']", timeout=30000)
+            assert chans["email"].sent == []  # drafts only
+            page.click(".job button:has-text('Approve all requests')")
+            page.wait_for_selector(".job [data-item='approve_requests']", state="detached", timeout=30000)
+            assert len(chans["email"].sent) == 3
+            now = datetime.now(timezone.utc)
+            chans["email"].inbox = [Inbound(channel="email", sender="r@rasoi.test", external_id="<r1>", received_at=now + timedelta(minutes=2), body="Total INR 66,000 for the event. Valid for 10 days.")]
+            page.click("#o-poll")
+            page.wait_for_selector("[data-item='confirm_claim'] .confirm-claim", timeout=30000)
+            assert "66,000" in page.inner_text("[data-item='confirm_claim']") and page.input_value(".claim-days") == "10"
+            assert em.observations.quotes("cat-pune-rasoi") == []  # proposed, not recorded
+            page.fill(".claim-days", "")
+            page.click(".confirm-claim")
+            page.wait_for_selector("#o-msg:not(:empty)", timeout=30000)  # validity is required
+            assert em.observations.quotes("cat-pune-rasoi") == []
+            page.fill(".claim-days", "10")
+            page.click(".confirm-claim")
+            page.wait_for_selector(".confirm-claim", state="detached", timeout=30000)
+            q = em.observations.quotes("cat-pune-rasoi")[0]
+            assert q.amount_inr == 66_000 and q.entered_by == "user_confirmed" and "10 days" in q.note
+            browser.close()
+    finally:
+        srv.shutdown()
+    assert [x for x in problems if "status of 4" not in x] == []

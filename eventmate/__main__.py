@@ -16,7 +16,8 @@
     python -m eventmate discover CITY [--kind venue|hotel|restaurant] [--limit N] [--json]   # OpenStreetMap places: candidates only
     python -m eventmate multicity LEG LEG... [--json]   # LEG = ORIGIN,DEST,YYYY-MM-DD; built from separate one-way searches
     python -m eventmate outreach PLAN_ID CATEGORY {email|whatsapp} RECIPIENT --name NAME [--json]   # write a quote request and a link; you send it, nothing is sent
-    python -m eventmate inbox [show|poll|approve|deny] [PLAN_ID] [DRAFT_ID --hash H] [--watch SECONDS]   # the agent sends what you approve and reads replies
+    python -m eventmate jobs [show|start|approve|confirm|reject|resolve|nudge|cancel|tick] ...   # follow-through jobs; `python -m eventmate.worker --every 60` runs them
+    python -m eventmate inbox [show|poll|approve|deny|autoreply|kill|resume] [PLAN_ID] [DRAFT_ID --hash H] [--watch SECONDS]   # the agent sends what you approve and reads replies
     python -m eventmate quotes {show VENDOR_ID | compare CATEGORY | score CATEGORY} [--json]   # recorded vendor quotes (record them via the web API)
 
 Exit codes: 0 ok, 2 bad input / unknown plan, 3 needs repair or a user decision.
@@ -43,7 +44,7 @@ from eventmate.discovery import DiscoveryError
 from eventmate.travel import TravelError, check_date
 from eventmate.weather import WeatherError
 
-COMMANDS = {"inbox", "outreach", "plan", "confirm", "replan", "show", "diff", "validate", "list", "intake", "tradeoffs", "ledger", "quotes", "flights", "multicity", "discover", "weather", "deals"}
+COMMANDS = {"jobs", "inbox", "outreach", "plan", "confirm", "replan", "show", "diff", "validate", "list", "intake", "tradeoffs", "ledger", "quotes", "flights", "multicity", "discover", "weather", "deals"}
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -110,11 +111,28 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--name", required=True, help="your name, signed at the end of the message")
     p.add_argument("--json", action="store_true")
     p = sub.add_parser("inbox", help="the vendor conversations: send what you approved, read replies, show what needs you")
-    p.add_argument("what", choices=["show", "poll", "approve", "deny"], nargs="?", default="show")
+    p.add_argument("what", choices=["show", "poll", "approve", "deny", "autoreply", "kill", "resume"], nargs="?", default="show")
     p.add_argument("plan_id", nargs="?")
     p.add_argument("draft_id", nargs="?")
     p.add_argument("--hash", help="content hash of the draft as shown by `inbox show` (approve only)")
     p.add_argument("--watch", type=int, metavar="SECONDS", help="with poll: keep polling every SECONDS until interrupted")
+    p.add_argument("--name", help="autoreply: your name, signed on automatic messages (giving it grants the permission)")
+    p.add_argument("--hours", type=int, default=72, help="autoreply: how long the permission lasts (1-168)")
+    p.add_argument("--max-per-thread", type=int, default=3, help="autoreply: automatic messages per vendor (1-5)")
+    p.add_argument("--max-total", type=int, default=10, help="autoreply: automatic messages per plan (1-30)")
+    p.add_argument("--off", action="store_true", help="autoreply: revoke the permission")
+    p.add_argument("--json", action="store_true")
+    p = sub.add_parser("jobs", help="follow-through jobs: get N comparable quotes by a deadline; the worker sends what you approve, reads replies, nudges, and asks you")
+    p.add_argument("what", choices=["show", "start", "approve", "confirm", "reject", "resolve", "nudge", "cancel", "tick"], nargs="?", default="show")
+    p.add_argument("target", nargs="?", help="show/start: PLAN_ID; the others: JOB_ID")
+    p.add_argument("extra", nargs="?", help="start: CATEGORY; confirm/reject: CLAIM_ID; resolve/nudge: ITEM_ID")
+    p.add_argument("--vendors", help="start: comma-separated vendor ids that have saved contacts")
+    p.add_argument("--name", help="start: your name, signed on the requests")
+    p.add_argument("--goal", help="start: what you want, in a sentence (default: N quotes)")
+    p.add_argument("--min", type=int, default=3, dest="min_quotes")
+    p.add_argument("--cap", type=int, help="start: quotes above this total in INR do not count")
+    p.add_argument("--days", type=int, default=7, help="start: deadline in days")
+    p.add_argument("--valid-days", type=int, help="confirm: how many days (1-90) to treat the price as valid; the vendor's reply rarely says")
     p.add_argument("--json", action="store_true")
     p = sub.add_parser("confirm")
     p.add_argument("plan_id")
@@ -228,6 +246,8 @@ def _run(em: EventMate, a) -> int:
         return _outreach(em, a)
     if a.command == "inbox":
         return _inbox(em, a)
+    if a.command == "jobs":
+        return _jobs(em, a)
     if a.command in ("flights", "multicity"):
         return _travel(em, a)
     if a.command == "discover":
@@ -411,6 +431,60 @@ def _outreach(em: EventMate, a) -> int:
     return 0
 
 
+def _jobs(em: EventMate, a) -> int:
+    from datetime import datetime, timedelta, timezone
+
+    from eventmate.worker import digest
+
+    w = em.jobs
+    if a.what == "tick":
+        print(w.tick())
+        return 0
+    if a.what == "start":
+        if not (a.target and a.extra and a.vendors and a.name):
+            print("jobs start PLAN_ID CATEGORY --vendors id1,id2,id3 --name NAME [--min 3 --cap INR --days 7]", file=sys.stderr)
+            return 2
+        job = w.start_job(a.target, VendorCategory(a.extra), [v.strip() for v in a.vendors.split(",") if v.strip()], a.goal or f"{a.min_quotes} {a.extra} quotes",
+                          datetime.now(timezone.utc) + timedelta(days=a.days), a.name, a.min_quotes, a.cap)
+        print(f"job {job.job_id}: {len(job.vendors)} requests drafted, nothing sent. Read them with `inbox show {job.plan_id}`, then `jobs approve {job.job_id}`.")
+        return 0
+    if a.what in ("approve", "cancel"):
+        if not a.target:
+            print("give a job id", file=sys.stderr)
+            return 2
+        job = w.approve_requests(a.target) if a.what == "approve" else w.cancel(a.target)
+        print(f"job {job.job_id}: {job.status}; {job.next_action}")
+        return 0
+    if a.what in ("confirm", "reject", "resolve", "nudge"):
+        if not (a.target and a.extra):
+            print(f"jobs {a.what} JOB_ID {'CLAIM_ID' if a.what in ('confirm', 'reject') else 'ITEM_ID'}", file=sys.stderr)
+            return 2
+        if a.what == "confirm":
+            if a.valid_days is None:
+                print("confirm needs --valid-days N (1-90): the vendor's reply rarely says how long the price holds, so you choose", file=sys.stderr)
+                return 2
+            job = w.confirm_claim(a.target, a.extra, a.valid_days)
+        elif a.what == "reject":
+            job = w.reject_claim(a.target, a.extra)
+        elif a.what == "resolve":
+            job = w.resolve_item(a.target, a.extra)
+        else:
+            job = w.approve_nudge(a.target, a.extra)
+        print(f"job {job.job_id}: {job.status}; {job.next_action}")
+        return 0
+    jobs = [j for j in (w.store.list(a.target) if (em.store.root / "jobs.db").exists() else [])]
+    if a.json:
+        print(json.dumps([json.loads(j.model_dump_json()) for j in jobs], indent=2))
+        return 0
+    for j in jobs:
+        print(f"[{j.job_id}] " + digest(j).replace("\n", "\n    "))
+        for i in j.open_items():
+            print(f"    item {i.item_id} ({i.kind})" + (f" claim {i.ref}" if i.kind == "confirm_claim" else ""))
+    if not jobs:
+        print("no jobs")
+    return 0
+
+
 def _inbox(em: EventMate, a) -> int:
     if a.what == "poll":
         import time
@@ -421,9 +495,27 @@ def _inbox(em: EventMate, a) -> int:
             if not a.watch:
                 return 1 if res.errors else 0
             time.sleep(max(5, a.watch))
+    if a.what in ("kill", "resume"):
+        (em.kill_all_autoreplies if a.what == "kill" else em.resume_autoreplies)()
+        print("every automatic message is stopped" if a.what == "kill" else "automatic replies may be granted again; existing permissions apply")
+        return 0
     if not a.plan_id:
         print("give a plan id", file=sys.stderr)
         return 2
+    if a.what == "autoreply":
+        if a.off:
+            em.revoke_autoreply(a.plan_id)
+        elif a.name:
+            em.grant_autoreply(a.plan_id, a.name, a.hours, a.max_per_thread, a.max_total)
+        st = em.autoreply_status(a.plan_id)
+        m = st.mandate
+        if st.killed:
+            print("automatic replies are OFF: the kill switch is on (`inbox resume` lifts it)")
+        elif st.active:
+            print(f"automatic follow-up questions are ON until {m.expires_at:%Y-%m-%d %H:%M} UTC ({st.sent_total} of {m.max_total} used, {m.max_per_thread} per vendor, {m.window_start:02d}:00-{m.window_end:02d}:00 IST)")
+        else:
+            print("automatic replies are off for this plan")
+        return 0
     if a.what in ("approve", "deny"):
         if not a.draft_id or (a.what == "approve" and not a.hash):
             print("approve needs DRAFT_ID and --hash (see `inbox show`)", file=sys.stderr)

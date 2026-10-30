@@ -26,7 +26,7 @@ import sys
 import threading
 import time
 from collections import defaultdict, deque
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Deque, Dict, List, Literal, Optional
 
@@ -49,6 +49,8 @@ from eventmate.discovery import DiscoveryError
 from eventmate.places import PlacesError, PlacesNotConfigured
 from eventmate.service import EventMate
 from eventmate.weather import WeatherError, WeatherNotConfigured
+from eventmate.jobs import StaleJob
+from eventmate.worker import digest
 from eventmate.websearch import SearchError
 from eventmate.travel import CABINS, TravelError, check_date
 
@@ -146,6 +148,33 @@ class ContactBody(_Strict):
     email: Optional[str] = Field(default=None, max_length=254)
     whatsapp: Optional[str] = Field(default=None, max_length=30)
     preferred: Literal["email", "whatsapp"] = "whatsapp"
+
+
+class AutoreplyBody(_Strict):
+    sender_name: str = Field(min_length=1, max_length=80)
+    hours: int = Field(default=72, ge=1, le=168)
+    max_per_thread: int = Field(default=3, ge=1, le=5)
+    max_total: int = Field(default=10, ge=1, le=30)
+
+
+class JobBody(_Strict):
+    category: VendorCategory
+    vendor_ids: List[str] = Field(min_length=1, max_length=10)
+    goal: str = Field(min_length=1, max_length=300)
+    sender_name: str = Field(min_length=1, max_length=80)
+    deadline_days: int = Field(default=7, ge=1, le=60)
+    min_quotes: int = Field(default=3, ge=1, le=10)
+    max_amount_inr: Optional[int] = Field(default=None, gt=0)
+    max_nudges_per_vendor: int = Field(default=2, ge=0, le=5)
+    reply_window_hours: int = Field(default=24, ge=1, le=168)
+
+
+class ConfirmClaimBody(_Strict):
+    valid_days: int = Field(ge=1, le=90)
+
+
+class ResolveItemBody(_Strict):
+    note: str = Field(default="", max_length=200)
 
 
 class EmptyBody(_Strict):
@@ -373,6 +402,10 @@ def create_app(
     @app.errorhandler(404)
     def _404(exc):
         return _err(404, "not found")
+
+    @app.errorhandler(StaleJob)
+    def _stale(exc):
+        return _err(409, "this job changed while you were looking at it; reload and try again")
 
     @app.errorhandler(ValueError)
     def _value(exc):
@@ -652,6 +685,118 @@ def create_app(
             res = em.poll_conversations()
         return out(res)
 
+    @app.get("/api/plans/<plan_id>/autoreply")
+    def autoreply_get(plan_id):
+        plan_id = pid(plan_id)
+        with lock:
+            st = em.autoreply_status(plan_id)
+        return out(st)
+
+    @app.post("/api/plans/<plan_id>/autoreply")
+    def autoreply_grant(plan_id):
+        """Standing permission for fixed follow-up questions, bounded in time, count and hours. Revocable at any moment."""
+        plan_id, b = pid(plan_id), body(AutoreplyBody)
+        with lock:
+            em.grant_autoreply(plan_id, b.sender_name, b.hours, b.max_per_thread, b.max_total)
+            st = em.autoreply_status(plan_id)
+        return out(st, 201)
+
+    @app.post("/api/plans/<plan_id>/autoreply/revoke")
+    def autoreply_revoke(plan_id):
+        plan_id = pid(plan_id)
+        body(EmptyBody)
+        with lock:
+            st = em.revoke_autoreply(plan_id)
+        return out(st)
+
+    @app.post("/api/autoreply/kill")
+    def autoreply_kill():
+        """Stops every automatic message in every plan at once, including ones already queued."""
+        body(EmptyBody)
+        with lock:
+            em.kill_all_autoreplies()
+        return jsonify({"killed": True})
+
+    @app.post("/api/autoreply/resume")
+    def autoreply_resume():
+        body(EmptyBody)
+        with lock:
+            em.resume_autoreplies()
+        return jsonify({"killed": False})
+
+    @app.get("/api/plans/<plan_id>/jobs")
+    def jobs_get(plan_id):
+        plan_id = pid(plan_id)
+        with lock:
+            em.store.latest(plan_id)
+            jobs = em.jobs.store.list(plan_id) if (em.store.root / "jobs.db").exists() else []
+        return jsonify([{**json.loads(j.model_dump_json()), "digest": digest(j)} for j in jobs])
+
+    @app.post("/api/plans/<plan_id>/jobs")
+    def jobs_start(plan_id):
+        """A goal such as "3 comparable caterer quotes by the deadline". Drafts one request per vendor; nothing is sent until the user approves them."""
+        plan_id, b = pid(plan_id), body(JobBody)
+        with lock:
+            em.store.latest(plan_id)
+            job = em.jobs.start_job(plan_id, b.category, b.vendor_ids, b.goal, datetime.now(timezone.utc) + timedelta(days=b.deadline_days), b.sender_name,
+                                    b.min_quotes, b.max_amount_inr, b.max_nudges_per_vendor, b.reply_window_hours)
+        return out(job, 201)
+
+    @app.post("/api/jobs/<job_id>/approve-requests")
+    def job_approve(job_id):
+        job_id = pid(job_id)
+        body(EmptyBody)
+        with lock:
+            job = em.jobs.approve_requests(job_id)
+        return out(job)
+
+    @app.post("/api/jobs/<job_id>/claims/<claim_id>/confirm")
+    def job_confirm(job_id, claim_id):
+        """The only place a vendor's words become a recorded quote. The user chooses how long the price is treated as valid."""
+        job_id, claim_id, b = pid(job_id), pid(claim_id), body(ConfirmClaimBody)
+        with lock:
+            job = em.jobs.confirm_claim(job_id, claim_id, b.valid_days)
+        return out(job)
+
+    @app.post("/api/jobs/<job_id>/claims/<claim_id>/reject")
+    def job_reject(job_id, claim_id):
+        job_id, claim_id = pid(job_id), pid(claim_id)
+        body(EmptyBody)
+        with lock:
+            job = em.jobs.reject_claim(job_id, claim_id)
+        return out(job)
+
+    @app.post("/api/jobs/<job_id>/items/<item_id>/resolve")
+    def job_resolve(job_id, item_id):
+        job_id, item_id, b = pid(job_id), pid(item_id), body(ResolveItemBody)
+        with lock:
+            job = em.jobs.resolve_item(job_id, item_id, b.note)
+        return out(job)
+
+    @app.post("/api/jobs/<job_id>/items/<item_id>/approve-nudge")
+    def job_nudge(job_id, item_id):
+        job_id, item_id = pid(job_id), pid(item_id)
+        body(EmptyBody)
+        with lock:
+            job = em.jobs.approve_nudge(job_id, item_id)
+        return out(job)
+
+    @app.post("/api/jobs/<job_id>/cancel")
+    def job_cancel(job_id):
+        job_id = pid(job_id)
+        body(EmptyBody)
+        with lock:
+            job = em.jobs.cancel(job_id)
+        return out(job)
+
+    @app.post("/api/jobs/tick")
+    def jobs_tick():
+        """Run one round now instead of waiting for the background loop."""
+        body(EmptyBody)
+        with lock:
+            report = em.background_round()
+        return jsonify(report if isinstance(report, dict) else {"ran": [], "errors": [], "poll": json.loads(report.model_dump_json())})
+
     @app.get("/api/contacts")
     def contacts_get():
         with lock:
@@ -900,7 +1045,7 @@ def create_app(
         def poll_round():
             try:
                 with lock:
-                    em.poll_conversations()
+                    em.background_round()
             except Exception as exc:  # one failed round must not end the agent; the next round retries
                 print(f"conversation poll failed: {type(exc).__name__}", file=sys.stderr)
 

@@ -4,12 +4,12 @@ Read this first, then `AI_CODING_RULES.md`, `DECISIONS.md`, `ROADMAP.md`. Update
 change as any code or decision change, and at the end of every session. Stale handoff = unfinished work.
 
 Last updated: 2026-10-30
-Updated by: Claude (vendor conversation agent ADR-042)
+Updated by: Claude (follow-through jobs ADR-044)
 
 ## Current state
 
 - Package: `eventmate/` (sibling of `src/llm_plan`, which is untouched). Python venv at `.venv`.
-- Tests: `python -m pytest eventmate/tests` → **1168 passed** (2026-10-30; includes the Chromium end-to-end tests). pyflakes clean.
+- Tests: `python -m pytest eventmate/tests` → **1258 passed** (2026-10-30; includes the Chromium end-to-end tests). pyflakes clean.
 - Git: `MultiAgentPlanning` is a git repo, but `eventmate/`, `prompts/`, `docs/eventmate_architecture.md`,
   `AI_CODING_RULES.md` and these docs are **untracked**. Nothing has been committed from this work.
 
@@ -25,7 +25,8 @@ Updated by: Claude (vendor conversation agent ADR-042)
 | F5 Scheduler | partial: multi-organizer done; zones, working hours, multi-day open | ADR-020 |
 | F7 Rule packs | partial: dietary checklists done (all unreviewed); traditions and accessibility open | ADR-021 |
 | F24 Assistant | v1 done: RAG, tools, RBAC, proposals, cache/router, traces, prompt lock; behavioral evals never run on a real model | ADR-023 |
-| F11 Vendor conversations (email + WhatsApp) | built: draft, user approves exact text, agent sends (SMTP / WAHA), polls replies (IMAP / WAHA), inbox, analysis, follow-ups, limits; **not run against real accounts** | ADR-042, `channels.py`, `conversations.py`, `outreach.py` |
+| Follow-through jobs | built: N quotes by a deadline across vendors, claims the user confirms, nudges, expiry, API, UI, CLI, worker; no outside notifications | ADR-044, `jobs.py`, `claims.py`, `worker.py`, `docs/JOBS_DESIGN.md` |
+| F11 Vendor conversations (email + WhatsApp) | built: draft, user approves exact text, agent sends (SMTP / WAHA), polls replies (IMAP / WAHA), inbox, analysis, follow-ups, limits, optional standing permission for automatic follow-up questions (ADR-043); **not run against real accounts** | ADR-042, `channels.py`, `conversations.py`, `outreach.py` |
 | F10 Vendor score | built (backend, API, CLI, Budget-tab card); thresholds unvalidated; needs 3 current quotes to score price | ADR-040, `vendorscore.py` |
 | F9 Observation ledger + quote intelligence | done for local use: store, report, quote-driven pricing, Quotes card, "confirmed by vendor" label, re-price repair | ADR-006, ADR-025/026/027 |
 | F8 | already built | |
@@ -105,6 +106,10 @@ Roadmap-note repos were checked on 2026-10-30 through the GitHub API **metadata 
 Nearly all have 0-2 stars, so none counts as proven; any borrowing needs a read-through and a licence check first.
 
 ## Session log (newest first)
+
+- 2026-10-30: Reviewed an outside design and code slice for follow-through jobs and adopted it with nine changes (ADR-044): one permission instead of a second grant system, no assumed quote validity, a stricter amount check, a file lock after real concurrent processes double-claimed a send, aware timestamps, job-end veto, one claimant per outbound action, contact snapshot. Labelled set: 17 of 19 prices found, 0 wrong. Removed README notes the user objected to. The GitHub repo has the earlier code plus the README fix; the jobs work and the automatic follow-up permission are NOT pushed.
+
+- 2026-10-30: Automatic follow-up questions (ADR-043), at the user's request: a per-plan, time-boxed, capped, window-limited standing permission; fixed questions only; hands over on questions, refusals, attachments and stop requests; vendor is told it is automated; per-plan revoke and a global kill switch that also denies queued messages. 27 tests plus a browser test verified by mutation. Mistake caught on the way: my UI text promised the automatic-message disclosure before the code did it; I implemented and tested it. Pushed to GitHub earlier; this change is NOT pushed yet.
 
 - 2026-10-30: Vendor conversation agent (ADR-042), at the user's direction ("the agent should communicate and respond back, like OpenMuse"). Studied OpenMuse (it gates outbound actions behind hash-bound approvals; WhatsApp is not built there) and cloned WAHA (Apache-2.0, c42f68a). Built channels (SMTP/IMAP, WAHA), the approval gate and send claim, reply matching and analysis, limits, a background loop, CLI `inbox`, API, and a Vendor chats tab. 77 new tests, two browser tests, a real SMTP wire check. Bugs the tests found: the content hash treated a missing `kind` differently from "request" (every status change looked like tampering); saved WhatsApp contacts were fed back to the parser without their `+`; replies with equal timestamps were ordered by a random id; "booked on 12 Dec" was not recognised as unavailable (and bare "is booked" is deliberately not, because it can be a confirmation). Not verified live: real mail provider, real IMAP, any WAHA session.
 

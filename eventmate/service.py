@@ -29,6 +29,8 @@ from eventmate.leads import LeadStore
 from eventmate.channels import Channel, channels_from_env
 from eventmate.conversations import ConversationService
 from eventmate.outreach import OutreachStore
+from eventmate.worker import JobWorker
+from eventmate.jobs import JobStore
 from eventmate.ledger import Ledger
 from eventmate.observations import ObservationStore
 from eventmate.vendorscore import score_category
@@ -89,7 +91,11 @@ class EventMate:
         self.observations = ObservationStore(self.store.root, self.repo)
         self.repo.quotes = self.observations
         self.outreach_store = OutreachStore(self.store.root, self.observations.checklists)
+        self._jobs: Optional[JobWorker] = None
+        self.jobs_clock = None  # tests inject a clock here before the worker is first used
+        self._job_store: Optional[JobStore] = None
         self.conversations = ConversationService(self.outreach_store, channels or channels_from_env(os.environ), self.store.latest)
+        self.conversations.guards.append(self._job_guard)
         decisions = self.logs.decisions
         scheduler = SchedulingAgent(decisions)
         budget_policy = BudgetPolicy()
@@ -214,9 +220,40 @@ class EventMate:
         self.store.latest(plan_id)
         return self.lead_store.list(plan_id)
 
-    def draft_outreach(self, plan_id: str, category: VendorCategory, channel: str, recipient: str, sender_name: str):
-        """Write a quote request for a vendor in the plan. It is a proposal: nothing leaves until it is approved (ADR-041, ADR-042)."""
-        return self.outreach_store.draft(self.store.latest(plan_id), category, channel, recipient, sender_name)
+    @property
+    def jobs(self) -> JobWorker:
+        """The follow-through worker (ADR-044). The job database is created on first use."""
+        if self._jobs is None:
+            self._jobs = JobWorker(self, JobStore(self.store.root), self.jobs_clock) if self.jobs_clock else JobWorker(self, JobStore(self.store.root))
+        return self._jobs
+
+    def _job_guard(self, draft) -> Optional[str]:
+        """Dispatch-time veto, independent of the standing permission: an automatic follow-up that belongs to a finished or cancelled job never goes out."""
+        if draft.kind != "followup" or not (self.store.root / "jobs.db").exists():
+            return None
+        if self._job_store is None:
+            self._job_store = JobStore(self.store.root)
+        for job in self._job_store.list(draft.plan_id):
+            if any(p.draft_id == draft.parent_id for p in job.vendors.values()):
+                return "the job this belongs to has ended" if job.status in ("done", "expired", "cancelled") else None
+        return None
+
+    def background_round(self):
+        """One round of the agent's background work: the job worker if any job exists (it polls conversations itself), otherwise just the conversations."""
+        if (self.store.root / "jobs.db").exists():
+            return self.jobs.tick()
+        return self.poll_conversations()
+
+    def draft_outreach(self, plan_id: str, category: VendorCategory, channel: str, recipient: str, sender_name: str, vendor_id: Optional[str] = None):
+        """Write a quote request for a vendor in the plan, or for another vendor of the category when ``vendor_id`` is given (to compare quotes).
+        It is a proposal: nothing leaves until it is approved (ADR-041, ADR-042)."""
+        vendor = None
+        if vendor_id is not None:
+            record = self.repo.get(category, vendor_id)
+            if record is None:
+                raise ValueError(f"unknown {category.value} {vendor_id!r}")
+            vendor = (record.id, record.name)
+        return self.outreach_store.draft(self.store.latest(plan_id), category, channel, recipient, sender_name, vendor)
 
     def outreach(self, plan_id: str):
         self.store.latest(plan_id)
@@ -249,6 +286,23 @@ class EventMate:
     def poll_conversations(self):
         """Send what is approved and read replies. Called by the background loop and by the CLI."""
         return self.conversations.poll()
+
+    def grant_autoreply(self, plan_id: str, sender_name: str, hours: int = 72, max_per_thread: int = 3, max_total: int = 10):
+        """Standing permission for fixed follow-up questions, bounded and revocable (ADR-043)."""
+        return self.conversations.grant_autoreply(plan_id, sender_name, hours, max_per_thread, max_total)
+
+    def revoke_autoreply(self, plan_id: str):
+        return self.conversations.revoke_autoreply(plan_id)
+
+    def autoreply_status(self, plan_id: str):
+        self.store.latest(plan_id)
+        return self.conversations.autoreply_status(plan_id)
+
+    def kill_all_autoreplies(self):
+        self.conversations.kill_all()
+
+    def resume_autoreplies(self):
+        self.conversations.resume_all()
 
     def reply_suggestions(self, plan_id: str, request_id: str):
         self.store.latest(plan_id)

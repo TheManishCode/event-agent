@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from typing import Dict, List, Literal, Optional, Tuple
 
@@ -1474,6 +1474,8 @@ class OutreachDraft(_Model):
     sent_at: Optional[datetime] = None
     external_id: str = Field(default="", max_length=400)  # Message-ID or WhatsApp message id of what was sent
     error: str = Field(default="", max_length=300)
+    action_key: str = Field(default="", max_length=200)  # who claimed this outbound action, e.g. "reply:<message_id>" or "nudge:<job>:<vendor>:<n>"; one live draft per key
+    approved_by: Literal["user", "mandate"] = "user"  # "mandate": sent under the user's standing permission (ADR-043), not a per-message approval
     source: Literal["user_input"] = "user_input"
     notice: str = "Not sent until you approve it. After that EventMate sends it through the channel you configured and reads the vendor's reply."
 
@@ -1552,6 +1554,7 @@ class ReplyAnalysis(_Model):
     says_unavailable: bool = False
     says_available: bool = False
     questions: Tuple[str, ...] = Field(default=(), max_length=5)  # sentences the vendor asked you
+    asks_to_stop: bool = False  # "stop", "do not contact me", "wrong number": nothing automatic is ever sent after this
     checklist_mentioned: Tuple[str, ...] = ()
     source: Literal["rule:reply_analysis"] = "rule:reply_analysis"
 
@@ -1572,6 +1575,7 @@ class InboundMessage(_Model):
     attachments: int = Field(default=0, ge=0, le=100)  # counted, never opened
     analysis: ReplyAnalysis = ReplyAnalysis()
     read: bool = False
+    auto_handled: bool = False  # the standing permission has already looked at this reply (answered it or handed it to the user)
     notice: str = "The vendor's own words, shown as text. Nothing in a reply changes a plan or records a quote until you do."
 
     @field_validator("vendor_name", "sender")
@@ -1616,4 +1620,48 @@ class PollResult(_Model):
     sent: int = Field(default=0, ge=0)  # approved drafts dispatched in this round
     waiting: Tuple[str, ...] = ()  # why approved drafts have not gone out yet
     errors: Tuple[str, ...] = ()
+
+
+MANDATE_MAX_HOURS = 168
+
+
+class Mandate(_Model):
+    """The user's standing permission for the agent to ask routine follow-up questions in a plan's vendor threads without approving each one (ADR-043).
+
+    Narrow by design: fixed questions about missing information only. Bounded in time, count and hours of the day, and revocable at any moment.
+    """
+
+    plan_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    sender_name: str = Field(min_length=1, max_length=80)
+    granted_at: datetime
+    expires_at: datetime
+    max_per_thread: int = Field(default=3, ge=1, le=5)
+    max_total: int = Field(default=10, ge=1, le=30)
+    window_start: int = Field(default=9, ge=0, le=23)  # hours in IST; automatic messages wait outside [start, end)
+    window_end: int = Field(default=20, ge=1, le=24)
+    revoked_at: Optional[datetime] = None
+
+    @field_validator("sender_name")
+    @classmethod
+    def _name_ok(cls, v: str) -> str:
+        return _clean_text(v)
+
+    @model_validator(mode="after")
+    def _bounds(self) -> "Mandate":
+        if not self.granted_at < self.expires_at <= self.granted_at + timedelta(hours=MANDATE_MAX_HOURS):
+            raise ValueError(f"the permission must end after it starts and within {MANDATE_MAX_HOURS} hours")
+        if self.window_start >= self.window_end:
+            raise ValueError("window_start must be before window_end")
+        return self
+
+    def active_at(self, now: datetime) -> bool:
+        return self.revoked_at is None and self.granted_at <= now < self.expires_at
+
+
+class AutoreplyStatus(_Model):
+    plan_id: str
+    active: bool  # a permission exists, is not revoked or expired, and the global kill switch is off
+    killed: bool  # the global kill switch is on
+    mandate: Optional[Mandate] = None
+    sent_total: int = Field(default=0, ge=0)  # automatic messages queued or sent under this plan's permission
 

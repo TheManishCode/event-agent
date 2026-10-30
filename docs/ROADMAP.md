@@ -35,11 +35,11 @@ solver-verified plans, provenance-tracked vendor quotes, bounded negotiation, an
 | F8 | Constraint compiler (OR-Tools CP-SAT + PDDL) | Already built | - | Keep; do not add another planner |
 | F9 | Observation ledger + quote intelligence (inclusions, hidden costs, missing items, validity) | Accept (done 2026-10-30 for local use: store, quote pricing, UI card, vendor-confirmation label) | 3 | ADR-006, ADR-025 |
 | F10 | Vendor score (transparent formula: price vs observed median, response time, quote completeness, terms) | Accept (partial 2026-10-30: price, completeness, evidence; response time and terms need data; Budget-tab card done; ADR-040) | 3 | Formula shown to user; ratings only if a sourced observation exists |
-| F11 | Email + WhatsApp quote requests, written confirmation | Accept (built 2026-10-30, ADR-042: agent sends approved messages through the user's own mailbox or a WAHA gateway and reads replies; not run against real accounts; no auto-reply mandate) | 3 | Legal check of ADR-018 is the user's; WhatsApp via an unofficial gateway can get the number restricted |
+| F11 | Email + WhatsApp quote requests, written confirmation | Accept (built 2026-10-30, ADR-042: agent sends approved messages through the user's own mailbox or a WAHA gateway and reads replies; not run against real accounts; automatic follow-up questions under a standing permission, ADR-043) | 3 | Legal check of ADR-018 is the user's; WhatsApp via an unofficial gateway can get the number restricted |
 | F12 | Credential Wallet (grants, approvals, audit, revoke-all) | Accept | 3 | ADR-009; prerequisite for F11 sending |
 | F13 | Human approval queue for outbound messages, data sharing, new accounts | Accept | 3 | Part of F12 |
 | F14 | Bounded text negotiation | Accept | 4 | ADR-008 |
-| F15 | Adaptive replanning on price/expiry refresh | Accept | 4 | Expiring observations trigger replan proposals |
+| F15 | Adaptive replanning on price/expiry refresh | Accept (jobs ADR-044 produce confirmed quotes; replanning on them is still a manual re-price) | 4 | Expiring observations trigger replan proposals |
 | F16 | Guest intelligence: headcount estimate (confirmed + probable), food quantity, reminders | Accept | 4 | Estimates labelled; rates are configurable data, not claimed accuracy |
 | F17 | Seating optimiser | Defer | 5 | Fits CP-SAT but needs relationship data input; low value before guests flow exists |
 | F18 | Day-of copilot: live run sheet, delay re-timing, team updates | Accept | 5 | Weather only from a real weather tool, never LLM (OpenWeather forecast card and API done 2026-10-30, ADR-029; not yet feeding day-of re-timing) |

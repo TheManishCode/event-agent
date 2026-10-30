@@ -7,6 +7,9 @@ budget. A user's own follow-up words are cleaned and bounded but not rewritten.
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
+import os
 import re
 import threading
 import unicodedata
@@ -18,7 +21,7 @@ from urllib.parse import quote
 
 from eventmate.jsonl import JsonlLog
 from eventmate.schemas import (
-    InboundMessage, OutreachDraft, PlanVersion, VendorCategory, VendorContact, _EMAIL,
+    InboundMessage, Mandate, OutreachDraft, PlanVersion, VendorCategory, VendorContact, _EMAIL,
 )
 
 _SERVICE = {VendorCategory.VENUE: "a venue", VendorCategory.CATERER: "catering", VendorCategory.PHOTOGRAPHER: "photography"}
@@ -37,6 +40,11 @@ class _OutreachFile(JsonlLog[OutreachDraft]):
 class _InboundFile(JsonlLog[InboundMessage]):
     channel = "inbound"
     model = InboundMessage
+
+
+class _MandateFile(JsonlLog[Mandate]):
+    channel = "mandate"
+    model = Mandate
 
 
 class _ContactFile(JsonlLog[VendorContact]):
@@ -121,6 +129,32 @@ class OutreachStore:
         self.checklists = checklists
         self.now = now
         self._lock = threading.RLock()
+        self._depth = 0
+
+    @contextlib.contextmanager
+    def _locked(self):
+        """Mutual exclusion for read-modify-write steps: an in-process lock plus an exclusive file lock, so the web server and a separate
+        worker process cannot both claim the same draft or store the same reply. Re-entrant within one thread."""
+        with self._lock:
+            if self._depth:
+                self._depth += 1
+                try:
+                    yield
+                finally:
+                    self._depth -= 1
+                return
+            self.base.mkdir(parents=True, exist_ok=True, mode=0o700)
+            fd = os.open(self.base / ".outreach.lock", os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                self._depth = 1
+                try:
+                    yield
+                finally:
+                    self._depth = 0
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+            finally:
+                os.close(fd)
 
     # ------------------------------------------------------------ files
 
@@ -152,7 +186,7 @@ class OutreachStore:
 
     def transition(self, plan_id: str, draft_id: str, allowed: Iterable[str], **changes) -> OutreachDraft:
         """Compare-and-set: the draft moves only if it is still in one of the `allowed` states. The old line stays in the file."""
-        with self._lock:
+        with self._locked():
             cur = self.get(plan_id, draft_id)
             if cur is None:
                 raise ValueError(f"unknown draft {draft_id!r}")
@@ -166,20 +200,26 @@ class OutreachStore:
         draft = OutreachDraft(draft_id=uuid.uuid4().hex, plan_id=plan_id, created_at=now, expires_at=now + PROPOSAL_TTL, **fields)
         return self._file(plan_id)._append(draft, draft.draft_id)
 
-    def draft(self, plan: PlanVersion, category: VendorCategory, channel: str, recipient: str, sender_name: str) -> OutreachDraft:
+    def draft(self, plan: PlanVersion, category: VendorCategory, channel: str, recipient: str, sender_name: str, vendor: Optional[Tuple[str, str]] = None) -> OutreachDraft:
+        """``vendor`` = (vendor_id, name) asks a vendor other than the plan's pick, to compare quotes (jobs). The caller has checked that it exists."""
         selection = plan.selection_for(category)
         if selection is None:
             raise ValueError(f"{category.value} is not in this plan")
+        vendor_id, vendor_name = vendor if vendor is not None else (selection.vendor_id, selection.name)
         sender = _clean_name(sender_name)
         recipient = _check_recipient(channel, recipient)
-        subject, body = _message(plan, category, selection.name, sender, self.checklists.get(category.value, ()))
+        subject, body = _message(plan, category, vendor_name, sender, self.checklists.get(category.value, ()))
         subject = subject if channel == "email" else ""
         return self._new(
-            plan.plan_id, category=category, vendor_id=selection.vendor_id, vendor_name=selection.name, channel=channel, recipient=recipient,
+            plan.plan_id, category=category, vendor_id=vendor_id, vendor_name=vendor_name, channel=channel, recipient=recipient,
             subject=subject, body=body, link=_links(channel, recipient, subject, body),
         )
 
-    def followup(self, plan_id: str, parent_id: str, text: str, sender_name: str) -> OutreachDraft:
+    def followup(self, plan_id: str, parent_id: str, text: str, sender_name: str, automated: bool = False, action_key: str = "") -> OutreachDraft:
+        with self._locked():
+            return self._followup_locked(plan_id, parent_id, text, sender_name, automated, action_key)
+
+    def _followup_locked(self, plan_id: str, parent_id: str, text: str, sender_name: str, automated: bool, action_key: str) -> OutreachDraft:
         parent = self.get(plan_id, parent_id)
         if parent is None or parent.kind != "request":
             raise ValueError("unknown request to follow up")
@@ -187,11 +227,16 @@ class OutreachStore:
             raise ValueError("a follow-up needs a request that has been sent")
         if sum(1 for d in self.list(plan_id) if d.parent_id == parent_id) >= MAX_FOLLOWUPS_PER_THREAD:
             raise ValueError(f"at most {MAX_FOLLOWUPS_PER_THREAD} follow-ups per request; ask the vendor on a call instead")
-        body = f"{clean_followup(text)}\n\nThank you,\n{_clean_name(sender_name)}"
+        sender = _clean_name(sender_name)
+        if action_key and any(d.action_key == action_key and d.status not in ("denied", "expired") for d in self.list(plan_id)):
+            raise ValueError("another action already claimed this response")  # two systems may see the same reply or silence; only one may answer it
+        body = f"{clean_followup(text)}\n\nThank you,\n{sender}"
+        if automated:  # the vendor is always told when no person wrote the message
+            body += f"\n(Sent by an automated assistant on behalf of {sender}.)"
         subject = parent.subject if parent.subject.lower().startswith("re:") or not parent.subject else f"Re: {parent.subject}"
         return self._new(
             plan_id, category=parent.category, vendor_id=parent.vendor_id, vendor_name=parent.vendor_name, channel=parent.channel, recipient=parent.recipient,
-            subject=subject, body=body, link=_links(parent.channel, parent.recipient, subject, body), kind="followup", parent_id=parent_id,
+            subject=subject, body=body, link=_links(parent.channel, parent.recipient, subject, body), kind="followup", parent_id=parent_id, action_key=action_key,
         )
 
     def mark_sent(self, plan_id: str, draft_id: str) -> OutreachDraft:
@@ -213,19 +258,60 @@ class OutreachStore:
 
     def add_inbound(self, msg: InboundMessage) -> Optional[InboundMessage]:
         """Store a reply once. The same message (channel and external id) seen twice is ignored."""
-        with self._lock:
+        with self._locked():
             if any((m.channel, m.external_id) == (msg.channel, msg.external_id) for m in self.inbound(msg.plan_id)):
                 return None
             return self._inbound(msg.plan_id)._append(msg, msg.message_id)
 
     def mark_read(self, plan_id: str, message_id: str) -> InboundMessage:
-        with self._lock:
+        with self._locked():
             cur = next((m for m in self.inbound(plan_id) if m.message_id == message_id), None)
             if cur is None:
                 raise ValueError(f"unknown message {message_id!r}")
             if cur.read:
                 return cur
             return self._inbound(plan_id)._append(cur.model_copy(update={"read": True}), message_id)
+
+    def mark_auto_handled(self, plan_id: str, message_id: str) -> None:
+        with self._locked():
+            cur = next((m for m in self.inbound(plan_id) if m.message_id == message_id), None)
+            if cur is not None and not cur.auto_handled:
+                self._inbound(plan_id)._append(cur.model_copy(update={"auto_handled": True}), message_id)
+
+    # ------------------------------------------------------------ standing permission (ADR-043)
+
+    def _mandates(self, plan_id: str) -> _MandateFile:
+        return _MandateFile(self.base / "mandates", run_id=plan_id)
+
+    def mandate(self, plan_id: str) -> Optional[Mandate]:
+        items = self._mandates(plan_id).read()
+        return items[-1] if items else None
+
+    def set_mandate(self, m: Mandate) -> Mandate:
+        return self._mandates(m.plan_id)._append(m, m.plan_id)
+
+    def revoke_mandate(self, plan_id: str) -> Optional[Mandate]:
+        with self._locked():
+            cur = self.mandate(plan_id)
+            if cur is None or cur.revoked_at is not None:
+                return cur
+            return self._mandates(plan_id)._append(Mandate.model_validate({**cur.model_dump(), "revoked_at": self.now()}), plan_id)
+
+    @property
+    def _kill_file(self) -> Path:
+        return self.base / "mandates" / "KILL"
+
+    @property
+    def killed(self) -> bool:
+        return self._kill_file.exists()
+
+    def set_killed(self, on: bool) -> None:
+        """The global kill switch: a file, so it survives restarts and can be checked from anywhere. While it exists nothing automatic is sent."""
+        self._kill_file.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if on:
+            self._kill_file.touch(mode=0o600)
+        else:
+            self._kill_file.unlink(missing_ok=True)
 
     # ------------------------------------------------------------ contacts
 

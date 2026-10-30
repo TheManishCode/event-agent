@@ -30,6 +30,7 @@ EventMate can write to your vendors and read their replies (ADR-042). Every mess
 (SMTP/IMAP) or a self-hosted [WAHA](https://github.com/devlikeapro/waha) WhatsApp gateway, and shows what comes back in the **Vendor chats** tab. Replies are shown as the vendor's own words with the
 amounts and questions quoted; nothing becomes a quote until you record it. Settings are in `.env.example`.
 `python -m eventmate inbox show|poll|approve|deny` does the same from the terminal.
+Optionally you can give the agent a standing permission to ask routine follow-up questions on its own (ADR-043): fixed questions only, time-boxed and capped, with a kill switch.
 
 ## Quick start
 

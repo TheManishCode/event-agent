@@ -542,7 +542,9 @@
   async function refreshAttention() {
     if (!state.planId) return;
     const r = await api(`/api/plans/${encodeURIComponent(state.planId)}/inbox`);
-    const n = r.ok ? r.data.unread_total + r.data.approvals_total : 0;
+    const jr = await api(`/api/plans/${encodeURIComponent(state.planId)}/jobs`);
+    const jobItems = jr.ok ? jr.data.filter((j) => !["done", "expired", "cancelled"].includes(j.status)).reduce((a, j) => a + j.items.filter((i) => !i.resolved).length, 0) : 0;
+    const n = (r.ok ? r.data.unread_total + r.data.approvals_total : 0) + jobItems;
     if (n !== state.attention) { state.attention = n; renderTabs(); }
   }
 
@@ -557,7 +559,7 @@
   const safeLink = (u) => /^(mailto:|https:\/\/wa\.me\/)/.test(u);
 
   async function renderTalk(card) {
-    const [box, contacts] = await Promise.all([api(`/api/plans/${encodeURIComponent(state.planId)}/inbox`), api("/api/contacts")]);
+    const [box, contacts, auto, jobsRes] = await Promise.all([api(`/api/plans/${encodeURIComponent(state.planId)}/inbox`), api("/api/contacts"), api(`/api/plans/${encodeURIComponent(state.planId)}/autoreply`), api(`/api/plans/${encodeURIComponent(state.planId)}/jobs`)]);
     for (const n of [...card.children].slice(1)) n.remove();
     if (!box.ok) { card.append(el("p", { class: "muted", text: "Vendor chats could not be loaded." })); return; }
     const inbox = box.data, saved = contacts.ok ? contacts.data : [];
@@ -579,6 +581,7 @@
     const poll = el("button", { class: "btn", id: "o-poll", type: "button", text: "Check for replies now", on: { click: async () => {
       const res = await api("/api/inbox/poll", { method: "POST", body: {} });
       if (!res.ok) { fail(res, "Could not check."); return; }
+      await api("/api/jobs/tick", { method: "POST", body: {} });  // job items (prices to confirm, questions) update from the replies just read
       const r = res.data;
       toast(`${r.new_messages} new repl${r.new_messages === 1 ? "y" : "ies"}, ${r.sent} sent.` + (r.errors.length ? " " + r.errors.join("; ") : "") + (r.waiting.length ? " Waiting: " + r.waiting.join("; ") : ""), 6000);
       again();
@@ -593,15 +596,38 @@
       if (res.ok) again(); else fail(res, "That contact was refused.");
     } } });
 
+    // Standing permission (ADR-043): fixed follow-up questions only, bounded, revocable. The stop button is always visible.
+    const ar = auto.ok ? auto.data : null;
+    let autoBox = null;
+    if (ar) {
+      const m = ar.mandate;
+      const hours = el("select", { id: "a-hours", class: "input", "aria-label": "How long" }, ...[[24, "for 24 hours"], [72, "for 3 days"], [168, "for 7 days"]].map(([v, t]) => el("option", { value: v, text: t })));
+      const perThread = el("select", { id: "a-per", class: "input", "aria-label": "Messages per vendor" }, ...[1, 2, 3, 5].map((n) => el("option", { value: n, text: `up to ${n} per vendor`, selected: n === 3 })));
+      const turnOn = el("button", { class: "btn primary", id: "a-on", type: "button", text: "Allow automatic follow-up questions", on: { click: async () => {
+        if (!needName()) return;
+        const res = await api(`${planBase}/autoreply`, { method: "POST", body: { sender_name: state.senderName.trim(), hours: parseInt(hours.value, 10), max_per_thread: parseInt(perThread.value, 10), max_total: 10 } });
+        if (res.ok) again(); else fail(res, "Could not turn that on.");
+      } } });
+      const turnOff = el("button", { class: "btn small", id: "a-off", type: "button", text: "Turn off for this plan", on: { click: async () => { const res = await api(`${planBase}/autoreply/revoke`, { method: "POST", body: {} }); if (res.ok) again(); else fail(res, "Could not turn that off."); } } });
+      const kill = el("button", { class: "btn danger", id: "a-kill", type: "button", text: "STOP all automatic messages now", on: { click: async () => { const res = await api("/api/autoreply/kill", { method: "POST", body: {} }); if (res.ok) { toast("Every automatic message is stopped, including queued ones.", 5000); again(); } else fail(res, "Could not stop them."); } } });
+      const resume = el("button", { class: "btn small", id: "a-resume", type: "button", text: "Lift the stop", on: { click: async () => { const res = await api("/api/autoreply/resume", { method: "POST", body: {} }); if (res.ok) again(); else fail(res, "Could not lift it."); } } });
+      autoBox = el("section", { class: "alt", id: "autoreply" }, el("b", { text: "Automatic follow-up questions" }), " ",
+        ar.killed ? badge("stopped by the kill switch", "err") : ar.active ? badge(`on until ${new Date(m.expires_at).toLocaleString()} · ${ar.sent_total} of ${m.max_total} used`, "ok") : badge("off", ""),
+        el("p", { class: "muted", text: "When on, the agent may answer a vendor's reply with one fixed question about something still missing (price, what is included, your date, how long the quote is valid) without asking you each time. It never offers or accepts a price, never mentions your budget, never answers a question they asked you, and hands the chat to you if they refuse, ask you something, send a file or ask to stop. It sends only between 09:00 and 20:00 IST and every message says it was automatic." }),
+        el("div", { class: "actions" }, ar.active ? turnOff : [hours, perThread, turnOn], ar.killed ? resume : kill));
+    }
+
     card.append(
       el("p", { class: "muted", text: "EventMate writes to your vendors and reads what they answer. Every message waits for your approval of its exact text, goes out through your own email or WhatsApp gateway, and never contains your budget. Replies are shown as the vendor's own words; nothing becomes a quote until you record it." }),
       strip,
       inbox.channels.some((c) => !c.can_send) ? el("p", { class: "muted", text: "A channel that is not ready can still be used by hand: open the link on a draft, send it yourself, then press I sent it. WhatsApp through an unofficial gateway can get the number restricted by WhatsApp, so use a number you can afford to lose." }) : null,
+      autoBox,
       el("div", { class: "actions" }, name, all, poll),
       el("div", { class: "actions" }, vendorSel, cEmail, cWa, cPref, saveContact),
       saved.length ? el("p", { class: "muted", id: "c-list", text: "Saved contacts: " + saved.map((c) => `${c.vendor_id} (${[c.email && "email", c.whatsapp && "WhatsApp"].filter(Boolean).join(" + ")})`).join(", ") }) : null,
       msg);
 
+    card.append(jobsView(jobsRes.ok ? jobsRes.data : [], saved, { planBase, again, fail, needName }));
     if (!inbox.threads.length) card.append(el("p", { class: "muted", id: "o-empty", text: "No conversations yet. Save a vendor contact, then draft the requests." }));
     for (const t of inbox.threads) card.append(threadView(t, { planBase, canSend, again, fail, needName }));
     // writing to one vendor by typing a contact once, without saving it
@@ -616,6 +642,55 @@
     card.append(el("h3", { text: "Ask one vendor without saving a contact" }), el("div", { class: "actions" }, oneCat, oneCh, oneTo, one));
   }
 
+  // Follow-through jobs (ADR-044): a goal such as "3 comparable caterer quotes by the deadline", kept moving across days. Every item waits for you.
+  function jobsView(jobs, saved, ctx) {
+    const { again, fail, needName } = ctx;
+    const box = el("section", { class: "alt", id: "jobs" }, el("b", { text: "Quote jobs" }),
+      el("p", { class: "muted", text: "Ask several vendors for comparable quotes and let the agent keep it moving: it reads replies, proposes the prices it finds for you to confirm, and drafts a follow-up when a vendor is silent. A price becomes a recorded quote only when you confirm it and say how long it should count as valid. It never books or pays." }));
+    for (const j of jobs) {
+      const open = j.items.filter((i) => !i.resolved);
+      box.append(el("div", { class: "alt job", "data-job": j.job_id },
+        el("b", { text: j.goal }), " ", badge(j.status.replace("_", " "), j.status === "done" ? "ok" : j.status === "blocked" || j.status === "expired" ? "err" : "warn"),
+        el("div", { class: "muted", text: j.next_action }),
+        ...open.map((i) => {
+          const row = el("div", { class: "actions", "data-item": i.kind }, el("span", { text: i.text }));
+          const act = (label, path, body, cls = "btn small") => el("button", { class: cls, type: "button", text: label, on: { click: async () => { const r = await api(path, { method: "POST", body: body || {} }); if (r.ok) again(); else fail(r, "That did not work."); } } });
+          if (i.kind === "approve_requests") row.append(act("Approve all requests", `/api/jobs/${j.job_id}/approve-requests`, {}, "btn primary small"));
+          else if (i.kind === "confirm_claim") {
+            const claim = j.claims.find((c) => c.claim_id === i.ref);
+            const days = el("input", { class: "input claim-days", type: "number", min: "1", max: "90", placeholder: "valid for how many days?", value: claim && claim.stated_valid_days ? String(claim.stated_valid_days) : "", "aria-label": "Days this price is valid", style: { width: "11em" } });
+            row.append(days, el("span", { class: "muted", text: claim && claim.stated_valid_days ? "the vendor wrote this validity" : "the vendor did not say; you choose" }),
+              el("button", { class: "btn primary small confirm-claim", type: "button", text: "Confirm and record", on: { click: async () => {
+                const n = parseInt(days.value, 10);
+                if (!(n >= 1 && n <= 90)) { fail({ data: { error: "Enter how many days (1 to 90) this price should count as valid." } }, ""); return; }
+                const r = await api(`/api/jobs/${j.job_id}/claims/${i.ref}/confirm`, { method: "POST", body: { valid_days: n } }); if (r.ok) again(); else fail(r, "Could not record it.");
+              } } }), act("Not this one", `/api/jobs/${j.job_id}/claims/${i.ref}/reject`));
+          } else if (i.kind === "approve_nudge") row.append(act("Approve follow-up", `/api/jobs/${j.job_id}/items/${i.item_id}/approve-nudge`), act("Skip", `/api/jobs/${j.job_id}/items/${i.item_id}/resolve`));
+          else row.append(act("I dealt with it", `/api/jobs/${j.job_id}/items/${i.item_id}/resolve`));
+          return row;
+        }),
+        ["done", "expired", "cancelled"].includes(j.status) ? null : el("button", { class: "btn small", type: "button", text: "Cancel this job", on: { click: async () => { const r = await api(`/api/jobs/${j.job_id}/cancel`, { method: "POST", body: {} }); if (r.ok) again(); else fail(r, "Could not cancel."); } } })));
+    }
+    if (!saved.length) { box.append(el("p", { class: "muted", id: "jobs-hint", text: "Save contacts for a few vendors above to start a job." })); return box; }
+    const cat = el("select", { id: "j-cat", class: "input", "aria-label": "Category" }, ...["caterer", "venue", "photographer"].map((c) => el("option", { value: c, text: titleCase(c) })));
+    const picks = saved.map((c) => ({ id: c.vendor_id, box: el("input", { type: "checkbox", value: c.vendor_id, "aria-label": c.vendor_id }) }));
+    const min = el("input", { id: "j-min", class: "input", type: "number", min: "1", max: "10", value: "3", "aria-label": "How many quotes", style: { width: "5em" } });
+    const cap = el("input", { id: "j-cap", class: "input", type: "number", min: "1", placeholder: "Cap in INR (optional)", "aria-label": "Cap in INR" });
+    const days = el("select", { id: "j-days", class: "input", "aria-label": "Deadline" }, ...[[3, "in 3 days"], [7, "in 7 days"], [14, "in 14 days"]].map(([v, t]) => el("option", { value: v, text: t, selected: v === 7 })));
+    box.append(el("div", { class: "actions" }, cat, el("span", { class: "muted", text: "quotes needed:" }), min, cap, days),
+      el("div", { class: "actions" }, ...picks.map((p) => el("label", { class: "muted" }, p.box, " " + p.id + " "))),
+      el("button", { class: "btn primary", id: "j-start", type: "button", text: "Draft the requests for this job", on: { click: async () => {
+        const ids = picks.filter((p) => p.box.checked).map((p) => p.id);
+        if (!needName()) return;
+        if (!ids.length) { fail({ data: { error: "Tick the vendors to ask." } }, ""); return; }
+        const n = parseInt(min.value, 10) || 1;
+        const body = { category: cat.value, vendor_ids: ids, goal: `${n} comparable ${cat.value} quotes`, sender_name: state.senderName.trim(), deadline_days: parseInt(days.value, 10), min_quotes: n };
+        if (parseInt(cap.value, 10) > 0) body.max_amount_inr = parseInt(cap.value, 10);
+        const r = await api(`${ctx.planBase}/jobs`, { method: "POST", body }); if (r.ok) again(); else fail(r, "Could not start the job.");
+      } } }));
+    return box;
+  }
+
   function threadView(t, ctx) {
     const { planBase, canSend, again, fail, needName } = ctx;
     const items = [...t.drafts.map((d) => ({ at: d.created_at, d })), ...t.replies.map((m) => ({ at: m.received_at, m }))].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
@@ -626,7 +701,7 @@
       if (it.d) {
         const d = it.d, [label, kind] = STATUS_TAG[d.status] || [d.status, ""];
         box.append(el("div", { class: "msg out", "data-status": d.status },
-          el("div", { class: "muted", text: `You${d.kind === "followup" ? " (follow-up)" : ""}: ` }), el("span", { class: "tag " + kind, text: label }),
+          el("div", { class: "muted", text: `You${d.kind === "followup" ? " (follow-up)" : ""}: ` }), el("span", { class: "tag " + kind, text: label }), d.approved_by === "mandate" ? el("span", { class: "tag", text: "sent automatically" }) : null,
           el("pre", { class: "muted", style: { whiteSpace: "pre-wrap" }, text: d.body }),
           d.error ? el("div", { class: "bad", text: d.error + (d.status === "outcome_unknown" ? " Check the vendor chat before writing again." : "") }) : null,
           d.status === "prepared" ? el("div", { class: "actions" },
