@@ -1146,8 +1146,11 @@ def create_app(
 
     @app.get("/api/plans/<plan_id>")
     def get_plan(plan_id):
+        plan_id, version = pid(plan_id), version_arg()
         with lock:
-            return out(em.store.load(pid(plan_id), version_arg()))
+            doc = json.loads(em.store.load(plan_id, version).model_dump_json())
+            doc["current_verification"] = em.verification(plan_id, version)  # not stored with the plan: it reflects today's data
+        return jsonify(doc)
 
     @app.get("/api/plans/<plan_id>/versions")
     def versions(plan_id):

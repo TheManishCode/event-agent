@@ -817,6 +817,8 @@ class UnverifiedItem(_Model):
     name: str = Field(min_length=1, max_length=80)
     detail: str = Field(min_length=1, max_length=400)
     repair: str = Field(min_length=1, max_length=400)
+    label: str = Field(default="", max_length=120)  # short words for a badge or a sentence, e.g. "required accessibility unknown"
+    blocks_verified: bool = True  # True: the plan may be shown as a provisional plan but never as fully verified until this is resolved
 
 
 class ValidationReport(_Model):
@@ -833,6 +835,21 @@ class ValidationReport(_Model):
         if self.passed and self.violations:
             raise ValueError("a passing report cannot list violations")
         return self
+
+    def blocking_unverified(self) -> Tuple["UnverifiedItem", ...]:
+        return tuple(u for u in self.unverified if u.blocks_verified)
+
+    @property
+    def fully_verified(self) -> bool:
+        """Every hard check passed AND nothing that matters is still undecided. ``passed`` alone only says no check failed."""
+        return self.passed and not self.blocking_unverified()
+
+    def verification_label(self) -> str:
+        """"Verified", or "Needs verification: <what is unknown>". The one wording every surface uses."""
+        if not self.passed:
+            return "Failed"
+        blocking = self.blocking_unverified()
+        return "Verified" if not blocking else "Needs verification: " + "; ".join(u.label or u.name.replace("_", " ") for u in blocking)
 
 
 class PlanVersion(_Model):
@@ -1022,7 +1039,8 @@ class TradeoffOption(_Model):
     extra_spend: int = Field(ge=0)
     utility: float
     estimated_total: int = Field(ge=0)
-    verified: Literal[True] = True  # a full plan was built and validated (dry run, nothing stored)
+    verified: Literal[True] = True  # a full plan was built and every check that could be decided passed (dry run, nothing stored)
+    needs_verification: Tuple[str, ...] = ()  # what that plan would still leave undecided; empty means it would be fully verified
     source: str = "tool:tradeoff"
 
 

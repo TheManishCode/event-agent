@@ -61,8 +61,8 @@ class ExplainerAgent:
         self.llm = llm
         self.prompts = prompts or PromptStore()
 
-    def explain(self, plan: PlanVersion, diff: Optional[PlanDiff] = None, community=None) -> Explanation:
-        markdown = self._render(plan, diff, community)
+    def explain(self, plan: PlanVersion, diff: Optional[PlanDiff] = None, community=None, verification: Optional[dict] = None) -> Explanation:
+        markdown = self._render(plan, diff, community, verification)
         used, reason = False, None
         if self.llm is not None:
             polished, reason = self._polish(plan, markdown)
@@ -111,8 +111,9 @@ class ExplainerAgent:
 
     # ------------------------------------------------------------- render
 
-    def _render(self, plan: PlanVersion, diff: Optional[PlanDiff], community=None) -> str:
+    def _render(self, plan: PlanVersion, diff: Optional[PlanDiff], community=None, verification: Optional[dict] = None) -> str:
         r = plan.request
+        vstatus = verification or {"state": "verified" if plan.validation.fully_verified else "needs_verification", "label": plan.validation.verification_label(), "items": [{"detail": u.detail, "repair": u.repair} for u in plan.validation.blocking_unverified()]}
         out: List[str] = [
             f"# {_esc(r.event_type.value.replace('_', ' ').title())} in {_esc(r.city)} on {r.event_date.strftime('%d %b %Y')}",
             "",
@@ -121,6 +122,7 @@ class ExplainerAgent:
             + f": {_esc(plan.change_reason)}",
             "",
             "## Summary",
+            f"- Status: {'Verified' if vstatus['state'] == 'verified' else '**' + _esc(vstatus['label']) + '**: a provisional plan, not fully verified'}",
             f"- {r.guest_count} guests; budget {_inr(r.budget_total)}",
             f"- Vendors total {_inr(plan.total_cost)}; {_inr(r.budget_total - plan.total_cost)} left of the budget",
             f"- Dietary needs: {', '.join(d.value.replace('_', ' ') for d in plan.guests.required_diets) or 'none stated'}",
@@ -152,7 +154,10 @@ class ExplainerAgent:
 
         if community is not None:
             out += self._community_section(community)
-        out += ["## Why this plan is valid", f"- {sum(c.passed for c in plan.validation.checks)} of {len(plan.validation.checks)} hard constraints re-checked independently against the database: all passed"]
+        partial = "" if vstatus["state"] == "verified" else " (every check that could be decided; see below for what could not)"
+        out += ["## Why this plan is valid" if vstatus["state"] == "verified" else "## What was checked, and what is still open", f"- {sum(c.passed for c in plan.validation.checks)} of {len(plan.validation.checks)} hard constraints re-checked independently against the database: all passed{partial}"]
+        for it in vstatus["items"]:
+            out.append(f"- Still open: {_esc(it['detail'])}. To resolve: {_esc(it['repair'])}")
         out.append(f"- Symbolic (PDDL) feasibility: {plan.symbolic.status}" + (f", {len(plan.symbolic.plan_actions)} steps" if plan.symbolic.plan_actions else ""))
         out.append("- Checked: vendor availability, city, capacity, dietary options, prices, budget, schedule dependencies, resource clashes, lead times, requested reminders")
         if plan.version > 1:

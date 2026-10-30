@@ -280,12 +280,76 @@ def test_every_programme_activity_must_be_scheduled(em, pid):
 
 # ---- accessibility: unknown is neither pass nor fail
 
-def test_a_stated_access_need_with_no_venue_data_is_unverified_with_a_repair(em, pid):
+NEEDS = "Needs verification: required accessibility unknown"
+
+
+def test_a_stated_access_need_with_no_venue_data_gives_a_provisional_plan_that_is_not_fully_verified(em, pid):
     out = update(em, pid, access_needs=("step_free_access",))
-    assert out.status == "replanned"  # unknown never blocks the plan
+    assert out.status == "replanned"  # a provisional plan may be built: unknown does not make the plan invalid
+    r = out.plan.validation
+    assert r.passed and not r.fully_verified and r.verification_label() == NEEDS  # but it is never "verified"
     assert check(out.plan, "accessibility_declared") is None
-    u = next(x for x in out.plan.validation.unverified if x.name == "accessibility_declared")
-    assert "step_free_access" in u.detail and "ask the venue and record the answer" in u.repair.lower()
+    u = next(x for x in r.unverified if x.name == "accessibility_declared")
+    assert u.blocks_verified and "step_free_access" in u.detail and "ask the venue and record the answer" in u.repair.lower()
+    v = em.verification(out.plan.plan_id)
+    assert v["state"] == "needs_verification" and v["label"] == NEEDS and v["items"][0]["name"] == "accessibility_declared"
+
+
+def test_the_same_status_is_shown_in_the_explanation_the_assistant_the_cli_and_the_api(em, pid, capsys, tmp_path):
+    from eventmate.__main__ import main
+    from eventmate.web.app import create_app
+
+    out = update(em, pid, access_needs=("step_free_access",))
+    plan_id = out.plan.plan_id
+    md = em.explain(plan_id).markdown
+    assert "Status: **Needs verification: required accessibility unknown**" in md and "provisional plan, not fully verified" in md
+    assert "## What was checked, and what is still open" in md and "Still open:" in md and "## Why this plan is valid" not in md
+    base = ["--plan-dir", str(tmp_path / "p"), "--log-dir", str(tmp_path / "l"), "--allow-no-symbolic"]
+    assert main(base + ["validate", plan_id]) == 0
+    cli = capsys.readouterr().out
+    assert "PASSED" in cli and "NEEDS VERIFICATION: " + NEEDS in cli and "ask the venue and record the answer" in cli.lower()
+    client = create_app(em, today_fn=lambda: TODAY, poll_seconds=0).test_client()
+    doc = client.get(f"/api/plans/{plan_id}").get_json()
+    assert doc["current_verification"]["state"] == "needs_verification" and doc["current_verification"]["label"] == NEEDS
+    from eventmate.assistant import tools
+
+    ctx = type("Ctx", (), {"em": em, "plan_id": plan_id})()
+    assert tools._summary(ctx, None)["verification"]["label"] == NEEDS
+
+
+def test_a_tradeoff_option_that_would_leave_a_required_need_unknown_says_so(em, pid):
+    plan = update(em, pid, access_needs=("step_free_access",), attendance_low=100, attendance_high=200).plan
+    tight = plan.request.with_changes(budget_total=100_000)
+    report = em.tradeoff.propose(tight, TODAY)
+    assert report.status == "options" and report.options
+    assert all(o.needs_verification == ("required accessibility unknown",) for o in report.options)
+    plain = em.tradeoff.propose(plan.request.with_changes(budget_total=100_000, community=plan.request.community.model_copy(update={"access_needs": ()})), TODAY)
+    assert plain.options and all(o.needs_verification == () for o in plain.options)
+
+
+def test_the_status_clears_only_when_the_venues_answer_is_recorded(em, pid):
+    plan_id = update(em, pid, access_needs=("step_free_access",)).plan.plan_id
+    venue = em.store.latest(plan_id).selection_for(C.VENUE).vendor_id
+    assert em.verification(plan_id)["state"] == "needs_verification"
+    em.record_venue_accessibility(venue, ("step_free_access",), evidence_ref="email from the manager, 3 Nov", entered_by="Asha")
+    v = em.verification(plan_id)
+    assert v["state"] == "verified" and v["label"] == "Verified" and v["items"] == []
+    assert "Status: Verified" in em.explain(plan_id).markdown and "## Why this plan is valid" in em.explain(plan_id).markdown
+    em.record_venue_accessibility(venue, ("accessible_toilet",), evidence_ref="call, 4 Nov", entered_by="Asha")  # a later answer: no step-free access
+    assert em.verification(plan_id)["state"] == "failed"
+
+
+def test_an_unnamed_setup_owner_is_guidance_not_a_reason_to_withhold_verified(em, pid):
+    plan = em.store.latest(pid)  # no access need was stated, owners are not named
+    assert [u.name for u in plan.validation.unverified] == ["setup_cleanup_owners"] and not plan.validation.unverified[0].blocks_verified
+    v = em.verification(pid)
+    assert v["state"] == "verified" and v["other_unverified"][0]["name"] == "setup_cleanup_owners"
+
+
+def test_a_plan_that_is_not_a_community_event_is_unaffected(tmp_path):
+    e = EventMate(log_dir=tmp_path / "l", plan_dir=tmp_path / "p", run_id="w", require_symbolic=False)
+    wid = e.plan("Plan a 120-person wedding in Pune on December 12 under INR 500,000. Venue and catering.", today=TODAY).plan.plan_id
+    assert e.verification(wid)["state"] == "verified" and e.store.latest(wid).validation.fully_verified
 
 
 def test_recording_the_venues_answer_turns_unknown_into_a_pass_or_a_failure(em, pid):

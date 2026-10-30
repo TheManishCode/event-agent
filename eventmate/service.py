@@ -146,8 +146,24 @@ class EventMate:
         request = intake.to_request(draft, raw_text, today, source)
         return self.manager.run_request(request, today=today, guest_list_id=guest_list_id, change_reason="initial plan from the intake conversation, confirmed by the user")
 
-    def _dry_run_ok(self, request) -> bool:
-        return self.manager.run_request(request, today=self._today, guest_list_id=self._guest_list_id, persist=False).status == "planned"
+    def _dry_run_ok(self, request):
+        """(a full plan was built, what that plan would leave undecided). Used by the trade-off negotiator."""
+        out = self.manager.run_request(request, today=self._today, guest_list_id=self._guest_list_id, persist=False)
+        if out.status != "planned":
+            return False, ()
+        return True, tuple(u.label or u.name for u in out.plan.validation.blocking_unverified())
+
+    def verification(self, plan_id: str, version: Optional[int] = None) -> dict:
+        """Where a plan stands right now: "verified" or "needs_verification". Community plans are re-checked against today's data, so a venue's answer recorded after the plan was made counts at once."""
+        plan = self.store.load(plan_id, version)
+        report = self.revalidate(plan_id, version) if plan.request.event_type.value == "community" else plan.validation
+        blocking = report.blocking_unverified()
+        return {
+            "state": "verified" if report.fully_verified else ("needs_verification" if report.passed else "failed"),
+            "label": report.verification_label(),
+            "items": [{"name": u.name, "label": u.label or u.name, "detail": u.detail, "repair": u.repair} for u in blocking],
+            "other_unverified": [{"name": u.name, "label": u.label or u.name, "detail": u.detail} for u in report.unverified if not u.blocks_verified],
+        }
 
     def tradeoffs(self, text: str, today: Optional[date] = None, guest_list_id: Optional[str] = None) -> TradeoffReport:
         """Ranked, verified ways to make a failing request plannable. Nothing is stored or applied."""
@@ -409,7 +425,7 @@ class EventMate:
         if with_diff and plan.parent_version:
             diff = diff_plans(self.store.load(plan_id, plan.parent_version), plan)
         comm = community_mod.build_status(plan, self.checklist_store, self.revalidate(plan_id, version)) if plan.request.event_type.value == "community" else None
-        return self.explainer.explain(plan, diff, comm)
+        return self.explainer.explain(plan, diff, comm, self.verification(plan_id, version))
 
     def community_status(self, plan_id: str, today: Optional[date] = None):
         """The community view of a plan: hard checks, what could not be decided, and the conditional items with the user's marks."""

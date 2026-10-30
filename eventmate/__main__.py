@@ -274,6 +274,9 @@ def _run(em: EventMate, a) -> int:
     if a.command == "validate":
         report = em.revalidate(a.plan_id, a.version)
         print(f"{'PASSED' if report.passed else 'FAILED'}: {sum(c.passed for c in report.checks)}/{len(report.checks)} checks")
+        if report.passed:
+            v = em.verification(a.plan_id, a.version)
+            print(("VERIFIED" if v["state"] == "verified" else "NEEDS VERIFICATION") + ": " + v["label"] + "".join(f"\n  - {i['detail']}. To resolve: {i['repair']}" for i in v["items"]))
         _print_violations(report.violations)
         return 0 if report.passed else 3
     for pid in em.store.list_plans():

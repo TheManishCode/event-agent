@@ -2,6 +2,8 @@
 
 The community subtype for the demo is a **configuration choice, still undecided**. It is data in `eventmate/data/community_profiles.json` (or the file named by `EVENTMATE_COMMUNITY_PROFILES`). Pick one key from that file, call it `<subtype>`, and use a brief containing one of that profile's keywords. Examples: `college fest` -> `college_fest`; `RWA` -> `neighbourhood_gathering`; `fundraiser` -> `fundraiser`. Nothing in the code depends on which you pick.
 
+**Say this first.** The vendor data is synthetic seed data: mostly Pune, and only venues, caterers and photographers (a handful of Mumbai records). Prices, availability and capacities in the demo are not real. Email is shown with a fake mailbox or a controlled test mailbox, never real vendors.
+
 Setup: `python -m eventmate.web`, open http://127.0.0.1:8765. Mail is the fake world used by the tests (`tests/mailfake.py`) or a dedicated test mailbox you control (see `EMAIL_SETUP.md`). No real vendors.
 
 ## 1. Brief to plan (1 min)
@@ -15,6 +17,10 @@ Open **Ideas** -> Suggest ideas. Point at "Suggestions, not verified offers", no
 Open **Community**. Set own funds to 100000 and Save. It is refused: "Funding Vs Budget ... Short by INR 57,500", with "To fix". Nothing was saved. Set 160000 and Save: version 2, with the funding basis stated (own funds only; pledged never counted).
 Also show the conditional items: "11 conditional items not verified", each saying "Check with ...". Mark one confirmed with a name; the count drops. EventMate never marks one itself.
 
+### 3b. A required need stays "Needs verification" (1 min)
+In **Community**, tick *Step-free access* under "Access needs of your guests" and Save. The plan is built, but it is now **provisional**: the header shows **Needs verification: required accessibility unknown** (not the green "hard constraints passed"), the Overview says what is still open, and the Community tab says what to do. The seed venues declare no accessibility data, so EventMate does not guess.
+Now "What Lakeside Lawns told you about access": tick *Step-free access*, type where the answer came from ("email from the venue manager, 3 Nov"), and record it. The header changes to the normal verified badge. Record a later answer that leaves it out and the plan fails the check instead, with its repair.
+
 ## 4. Vendor request and reply (1 min)
 Vendor chats -> save contacts for three caterers, start a job ("2 caterer quotes"), approve the drafted requests (the exact text is shown; no budget in it). A reply arrives (`MailWorld.reply(...)` in the fake world, or reply from your second address): "Total INR 78,000 for the event. Valid for 10 days."
 Show the Updates box and the proposed price with "check taxes and extras". It is not a quote yet.
@@ -24,4 +30,4 @@ Enter validity (10 days is pre-filled because the vendor wrote it) and confirm: 
 Optional: turn on the owner email copy; show the exact summary before confirming.
 
 ## Paired regression run (30 s)
-Run a wedding: `Plan a 120-person wedding in Pune on December 12 under INR 500,000. Venue and catering.` There is no Community tab, no community checks, and the plan, Ideas and quotes flow work as before. `python -m pytest tests` (1499 passed on Python 3.14.8 with solvers and Chromium).
+Run a wedding: `Plan a 120-person wedding in Pune on December 12 under INR 500,000. Venue and catering.` There is no Community tab, no community checks, and the plan, Ideas and quotes flow work as before. `python -m pytest tests` (1507 passed on Python 3.14.8 with solvers and Chromium).

@@ -779,3 +779,40 @@ def test_updates_inbox_and_the_two_step_email_copy_in_the_browser(tmp_path):
     finally:
         srv.shutdown()
     assert [x for x in problems if "status of 4" not in x] == []
+
+
+def test_a_required_access_need_keeps_the_plan_provisional_everywhere_until_the_venue_answers(tmp_path):
+    em = EventMate(log_dir=tmp_path / "l", plan_dir=tmp_path / "p", run_id="accui", require_symbolic=False)
+    pid = em.plan("Plan a 150-person college fest in Pune on December 12 under INR 250,000. Venue and catering.", today=TODAY).plan.plan_id
+    pid = em.update_community(pid, __import__("eventmate.schemas", fromlist=["CommunityDetails"]).CommunityDetails(subtype="college_fest", access_needs=("step_free_access",)), today=TODAY).plan.plan_id
+    srv = make_server("127.0.0.1", 0, create_app(em, today_fn=lambda: TODAY, poll_seconds=0), threaded=True)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    problems = []
+    try:
+        with pw.sync_playwright() as p:
+            browser = p.chromium.launch(executable_path=CHROMIUM, args=["--no-sandbox"])
+            page = browser.new_page(viewport={"width": 1300, "height": 1000})
+            page.on("console", lambda m: problems.append(m.text) if m.type in ("error", "warning") else None)
+            page.goto(f"http://127.0.0.1:{srv.server_port}")
+            page.wait_for_selector(".plan-item", timeout=30000)
+            page.locator(".plan-item", has_text="Community").click()
+            page.wait_for_selector("#hero .badge:has-text('Needs verification: required accessibility unknown')", timeout=30000)
+            hero = page.inner_text("#hero")
+            assert "hard constraints passed" not in hero and "decidable checks passed" in hero  # never the plain green claim
+            assert "provisional plan" in page.inner_text("#ov-verification") and "what was checked, and what is still open" in page.inner_text("#panels").lower()
+            page.click("#tab-community")
+            page.wait_for_selector("#c-verification", timeout=30000)
+            assert "Needs verification: required accessibility unknown" in page.inner_text("#c-verification") and "Not verified" in page.inner_text("#community")
+            # recording the venue's answer, with evidence, resolves it
+            page.check("#a-boxes input[aria-label='Step-free access']")
+            page.fill("#a-evidence", "email from the venue manager, 3 Nov")
+            page.locator("#community input[aria-label='Your name']").last.fill("Asha")
+            page.click("#a-save")
+            page.wait_for_selector("#hero .badge:has-text('hard constraints passed')", timeout=30000)
+            assert "Needs verification" not in page.inner_text("#hero")
+            page.click("#tab-community")
+            page.wait_for_selector("#c-verification.ok", timeout=30000)
+            browser.close()
+    finally:
+        srv.shutdown()
+    assert [x for x in problems if "status of 4" not in x] == []

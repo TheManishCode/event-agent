@@ -79,7 +79,7 @@ class TradeoffAgent:
         self,
         repo: VendorRepository,
         logger: DecisionLogger,
-        verify: Callable[[EventRequest], bool],
+        verify: Callable[[EventRequest], object],  # returns bool, or (bool, what the plan would leave undecided)
         budget_policy: Optional[BudgetPolicy] = None,
         policy: Optional[TradeoffPolicy] = None,
     ):
@@ -89,8 +89,12 @@ class TradeoffAgent:
 
     # ------------------------------------------------------------- public
 
+    def _check(self, request: EventRequest):
+        r = self.verify(request)
+        return (bool(r[0]), tuple(r[1])) if isinstance(r, tuple) else (bool(r), ())
+
     def propose(self, request: EventRequest, today: date) -> TradeoffReport:
-        if self.verify(request):
+        if self._check(request)[0]:
             report = TradeoffReport(status="not_needed", request=request)
             self._log(request, report, [])
             return report
@@ -101,10 +105,11 @@ class TradeoffAgent:
         for cand in ranked:
             if len(options) >= self.policy.max_options:
                 break
-            if not self.verify(cand.request):
+            ok, needs = self._check(cand.request)
+            if not ok:
                 rejected.append(cand)
                 continue
-            options.append(self._option(request, cand, len(options) + 1))
+            options.append(self._option(request, cand, len(options) + 1, needs))
         if options:
             report = TradeoffReport(status="options", request=request, options=tuple(options))
         else:
@@ -285,7 +290,7 @@ class TradeoffAgent:
 
     # ------------------------------------------------------------ output
 
-    def _option(self, original: EventRequest, cand: _Candidate, n: int) -> TradeoffOption:
+    def _option(self, original: EventRequest, cand: _Candidate, n: int, needs: tuple = ()) -> TradeoffOption:
         stem = original.request_id[:55]
         return TradeoffOption(
             option_id=f"{stem}-o{n}",
@@ -297,6 +302,7 @@ class TradeoffAgent:
             extra_spend=cand.extra,
             utility=cand.utility(original.budget_total),
             estimated_total=cand.total,
+            needs_verification=needs,
         )
 
     def _log(self, request: EventRequest, report: TradeoffReport, rejected: List[_Candidate]) -> None:

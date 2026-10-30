@@ -13,6 +13,7 @@ Three classes of requirement stay apart:
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import threading
@@ -136,22 +137,24 @@ def parse_profiles(doc) -> Profiles:
     return Profiles(doc["version"], doc["reviewed"], default, out, tuple(defs))
 
 
-_CACHE: Dict[Tuple[str, int], Profiles] = {}
+_CACHE: Dict[Tuple[str, str], Profiles] = {}
 
 
 def load_profiles(path: Optional[Path] = None) -> Profiles:
     """The validated profiles. Re-read when the file changes, so editing the data changes behaviour with no code edit."""
     path = Path(path or os.environ.get("EVENTMATE_COMMUNITY_PROFILES") or PROFILES_PATH)
     try:
-        key = (str(path), path.stat().st_mtime_ns)
+        raw = path.read_bytes()
     except OSError as exc:
         raise ProfileError(f"community profiles unreadable: {exc}") from None
+    key = (str(path), hashlib.sha256(raw).hexdigest())  # the content, not the timestamp: two quick edits can share a modification time and a size
     if key not in _CACHE:
         try:
-            _CACHE.clear()
-            _CACHE[key] = parse_profiles(loads(path.read_text(encoding="utf-8")))
-        except (OSError, ValueError) as exc:
+            parsed = parse_profiles(loads(raw.decode("utf-8")))
+        except (UnicodeDecodeError, ValueError) as exc:
             raise ProfileError(f"community profiles unreadable: {exc}") from None
+        _CACHE.clear()
+        _CACHE[key] = parsed
     return _CACHE[key]
 
 
@@ -270,6 +273,7 @@ def _volunteers(d: PlanDraft) -> Tuple[Optional[ConstraintCheck], List[Unverifie
         unverified.append(UnverifiedItem(
             name="setup_cleanup_owners", detail="nobody is named to own setup and cleanup",
             repair="name a setup owner and a cleanup owner and add them to the volunteer list",
+            label="setup and cleanup owners not named", blocks_verified=False,  # planning guidance, not a stated requirement of the user
         ))
     windows = _phase_windows(d)
     problems: List[str] = []
@@ -359,6 +363,7 @@ def _accessibility(d: PlanDraft, repo) -> Tuple[Optional[ConstraintCheck], List[
         return None, [UnverifiedItem(
             name="accessibility_declared", detail=f"the venue has declared nothing about: {', '.join(det.access_needs)}",
             repair="ask the venue and record the answer (with where it came from) so this can be checked",
+            label="required accessibility unknown",  # the user stated this need, so the plan is not fully verified until the venue's answer is recorded
         )]
     have = [n for n in det.access_needs if n in declared]
     lack = [n for n in det.access_needs if n not in declared]

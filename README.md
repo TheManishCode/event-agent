@@ -72,7 +72,7 @@ eventmate/
   web/                            Flask API and single-page UI
   data/                           seed vendors, profiles, idea templates, knowledge base
 prompts/                          versioned prompt files (wording and output format only)
-tests/                            1499 tests
+tests/                            1507 tests
 docs/                             decisions, roadmap, setup guides, design notes
 ```
 
@@ -85,7 +85,7 @@ docs/                             decisions, roadmap, setup guides, design notes
 - **Nothing leaves without approval.** Vendor messages are bound to a hash of their exact text. The only exception is an optional, capped, time-boxed standing permission for fixed follow-up questions, with a kill switch. Request templates and automatic follow-ups never contain your budget or a price; text you type yourself is sent as written.
 - **Replies are untrusted data.** A vendor reply never records a quote, changes a plan or approves anything.
 - **Conservative sending.** A send is claimed before it happens (a file lock across processes), and a send whose outcome is unknown is never retried automatically. This reduces the chance of duplicates; it cannot make one impossible.
-- **Honest about what it cannot check.** Conditional requirements (permits, noise rules, licences…) stay "not verified" until you mark them; EventMate never says a plan is safe or compliant.
+- **Provisional until verified.** If a need you stated cannot be checked from the data (for example a required access need the venue has not declared), the plan is built but marked **Needs verification** everywhere; it is not called verified until you record the venue's answer. Conditional requirements (permits, noise rules, licences…) stay "not verified" until you mark them; EventMate never says a plan is safe or compliant.
 
 ## Testing
 
@@ -93,7 +93,7 @@ docs/                             decisions, roadmap, setup guides, design notes
 python -m pytest                  # whole suite
 ```
 
-1499 tests passed on Python 3.14.8 with Fast Downward, VAL and Chromium available. Without the solvers most planning tests fail by design; without Chromium the browser tests skip. Tests use fake SMTP/IMAP and fake channels and never call a keyed or external service.
+1507 tests passed on Python 3.14.8 with Fast Downward, VAL and Chromium available. Without the solvers most planning tests fail by design; without Chromium the browser tests skip. Tests use fake SMTP/IMAP and fake channels and never call a keyed or external service.
 
 ## Documentation
 

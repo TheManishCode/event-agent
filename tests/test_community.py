@@ -188,3 +188,36 @@ def test_editing_the_profile_file_changes_behaviour_with_no_code_edit(tmp_path, 
 def test_an_unknown_subtype_is_refused_with_the_known_ones_listed():
     with pytest.raises(ValueError, match="known:"):
         load_profiles().get("moon_base")
+
+
+def test_a_second_edit_in_the_same_instant_and_the_same_size_is_still_picked_up(tmp_path, monkeypatch):
+    """The cache keys on the content: a modification time (or a size) can be identical for two quick edits."""
+    import os
+
+    doc = profiles_doc()
+    path = tmp_path / "profiles.json"
+    path.write_text(json.dumps(doc))
+    stamp = os.stat(path)
+    monkeypatch.setenv("EVENTMATE_COMMUNITY_PROFILES", str(path))
+    assert load_profiles().get("college_fest").start_hour == doc["profiles"]["college_fest"]["event_window"]["start_hour"] == 12
+    doc["profiles"]["college_fest"]["event_window"]["start_hour"] = 13  # same length: "12" -> "13"
+    path.write_text(json.dumps(doc))
+    os.utime(path, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))  # force the identical timestamp
+    assert os.stat(path).st_size == len(json.dumps(doc).encode())  # still the same size as before: the edit was "12" -> "13"
+    assert os.stat(path).st_mtime_ns == stamp.st_mtime_ns
+    assert load_profiles().get("college_fest").start_hour == 13
+
+
+def test_a_broken_edit_is_refused_and_a_repair_is_picked_up(tmp_path, monkeypatch):
+    path = tmp_path / "profiles.json"
+    path.write_text(json.dumps(profiles_doc()))
+    monkeypatch.setenv("EVENTMATE_COMMUNITY_PROFILES", str(path))
+    assert load_profiles().default == "other"
+    path.write_text("{not json")
+    with pytest.raises(ProfileError):
+        load_profiles()
+    path.write_bytes(b"\xff\xfe")
+    with pytest.raises(ProfileError):
+        load_profiles()
+    path.write_text(json.dumps(profiles_doc()))
+    assert load_profiles().default == "other"

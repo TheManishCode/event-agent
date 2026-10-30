@@ -9,7 +9,7 @@ Updated by: Claude (ideas ADR-045, community ADR-046, email flow ADR-047)
 ## Current state
 
 - Package: `eventmate/` (sibling of `src/llm_plan`, which is untouched). Python venv at `.venv`.
-- Tests: `python -m pytest tests` → **1499 passed** (Python 3.14.8, with Fast Downward, VAL and Chromium) (2026-10-31; includes the Chromium end-to-end tests). pyflakes clean.
+- Tests: `python -m pytest tests` → **1507 passed** (Python 3.14.8, with Fast Downward, VAL and Chromium) (2026-10-31; includes the Chromium end-to-end tests). pyflakes clean.
 - Git: this repository (`event-agent`) is the home of the code. Tests live in `tests/`; the package is grouped into `planning`, `pricing`, `messaging`, `followthrough`, `integrations`, `agents`, `assistant`, `web`.
 
 ### Roadmap progress (rows count only with passing tests)
@@ -106,7 +106,9 @@ Nearly all have 0-2 stars, so none counts as proven; any borrowing needs a read-
 
 ## Session log (newest first)
 
-- 2026-10-31: Reorganised the repository (no behaviour change): modules grouped into subpackages, tests moved to `tests/`, `pyproject.toml`, README rewritten, CONTRIBUTING and Makefile added, the package README folded into `docs/CONFIGURATION.md`. 1499 tests pass unchanged. Module paths in older ADRs were rewritten to the new layout; their prose is otherwise historical.
+- 2026-10-31: Review fixes (ADR-048): a required access need that is unknown now makes the plan provisional ("Needs verification: required accessibility unknown") in the header, chat, Overview, Community tab, trade-off cards, explanation, CLI validate, API and assistant tool; the test that said unknown never blocks was replaced. Profile cache keys on content. Demo gained a synthetic-data disclosure and the access walkthrough. Branch `cleanup/structure` was pushed for review; nothing is on `main` beyond 82c8d4f.
+
+- 2026-10-31: Reorganised the repository (no behaviour change): modules grouped into subpackages, tests moved to `tests/`, `pyproject.toml`, README rewritten, CONTRIBUTING and Makefile added, the package README folded into `docs/CONFIGURATION.md`. 1507 tests pass unchanged. Module paths in older ADRs were rewritten to the new layout; their prose is otherwise historical.
 
 - 2026-10-31: Implemented the brief-fit prompt: personalized ideas (ADR-045), community events as profile-driven type with hard checks, user-marked conditional items and an Ideas/Community UI (ADR-046), fake-SMTP/IMAP end-to-end email tests, owner digest and optional owner email copy, smoke_email, EMAIL_SETUP/VALIDATION and DEMO docs (ADR-047). Found and fixed: a worker item raised for replies the Mandate answered. Not run: any real mailbox (Task 4 is the user's). Not pushed: all of this is local only; the GitHub repo is at 24e6c48.
 

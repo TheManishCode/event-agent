@@ -143,7 +143,9 @@
         el("div", { class: "badges" },
           badge(`Preference impact ${harm}%`, harm >= 50 ? "err" : harm >= 15 ? "warn" : "ok"),
           badge(o.extra_spend ? `Costs ${inr(o.extra_spend)} more` : "No extra spend", o.extra_spend ? "warn" : "ok"),
-          badge("Verified: full plan built", "ok")),
+          (o.needs_verification && o.needs_verification.length)
+            ? badge("Plan built, needs verification: " + o.needs_verification.join("; "), "warn")
+            : badge("Verified: full plan built", "ok")),
         el("button", { class: "btn primary", type: "button", text: "Apply this option", on: { click: (ev) => applyOption(o, body, ev.currentTarget) } })));
     }
   }
@@ -184,6 +186,13 @@
     renderHero(); renderTabs(); renderPanels(); refreshAttention();
   }
 
+  // One reading of "is this plan fully verified": the server's current_verification, else what the stored report says.
+  function verification(p) {
+    if (p && p.current_verification) return p.current_verification;
+    const blocking = ((p && p.validation && p.validation.unverified) || []).filter((u) => u.blocks_verified !== false);
+    return { state: blocking.length ? "needs_verification" : "verified", label: blocking.length ? "Needs verification: " + blocking.map((u) => u.label || u.name).join("; ") : "Verified", items: blocking };
+  }
+
   function badge(text, kind) { return el("span", { class: "badge " + (kind || "") }, el("i", { class: "dot" }), text); }
 
   function renderHero() {
@@ -196,7 +205,10 @@
       el("div", { class: "hero-top" },
         el("div", {}, el("h1", { text: `${titleCase(r.event_type)} in ${r.city}` }), el("div", { class: "sub", text: `${fmtDate(new Date(r.event_date + "T00:00:00"))} · ${r.guest_count} guests · plan ${p.plan_id} · version ${p.version}${p.parent_version ? " (from v" + p.parent_version + ")" : ""}` })),
         el("div", { class: "badges" },
-          badge(`${passed}/${total} hard constraints passed`, passed === total ? "ok" : "err"),
+          verification(p).state === "verified"
+            ? badge(`${passed}/${total} hard constraints passed`, passed === total ? "ok" : "err")
+            : badge(verification(p).label, "warn"),
+          verification(p).state === "verified" ? null : badge(`${passed}/${total} decidable checks passed`, passed === total ? "ok" : "err"),
           badge(`PDDL ${p.symbolic.status}`, p.symbolic.status === "valid" ? "ok" : "warn"),
           badge(`CP-SAT ${p.solution.status}`, "acc"),
           badge(`${confirmed} confirmed booking${confirmed === 1 ? "" : "s"}`, confirmed ? "ok" : ""))),
@@ -355,7 +367,8 @@
         ...list.map((c) => el("div", { class: "check" + (c.passed ? "" : " fail") }, el("span", { class: "tick", text: c.passed ? "✓" : "✗" }), el("div", {}, el("code", { text: c.name.split(":").pop() }), " ", el("span", { class: "why", text: c.detail }))))));
     }
     root.append(el("div", { class: "grid2" },
-      el("section", { class: "card" }, el("h2", { text: "Why this plan is valid" }), el("p", { class: "muted", text: "Re-derived from the vendor database, independent of the planner and solver." }), checks),
+      el("section", { class: "card" }, el("h2", { text: verification(p).state === "verified" ? "Why this plan is valid" : "What was checked, and what is still open" }), el("p", { class: "muted", text: "Re-derived from the vendor database, independent of the planner and solver." }),
+        verification(p).state === "verified" ? null : el("div", { id: "ov-verification", class: "notice warn", text: `${verification(p).label}. A provisional plan: every check that could be decided passed. ${verification(p).items.map((i) => i.repair).join(" ")}` }), checks),
       el("section", { class: "card" }, el("h2", { text: "Assumptions and warnings" }),
         ...(p.request.assumptions.length || p.warnings.length ? [...p.request.assumptions.map((a) => el("div", { class: "notice", text: "Assumption: " + a })), ...p.warnings.map((w) => el("div", { class: "notice warn", text: w }))] : [el("p", { class: "muted", text: "None." })]),
         el("h2", { text: "Symbolic check" }), el("p", { class: "muted", text: `${p.symbolic.detail}${p.symbolic.plan_actions.length ? " (" + p.symbolic.plan_actions.length + " steps)" : ""}` }),
@@ -561,6 +574,8 @@
     if (!r.ok) { card.append(el("p", { class: "muted", text: (r.data && r.data.error) || "Community details could not be loaded." })); return; }
     const d = r.data, again = () => renderCommunity(card);
     const msg = el("div", { class: "muted", id: "c-msg", role: "status" });
+    const ver = verification(state.plan);
+    card.append(el("div", { id: "c-verification", class: "notice " + (ver.state === "verified" ? "ok" : "warn"), text: ver.state === "verified" ? "Verified: every check passed and nothing required is unknown." : `${ver.label}. This is a provisional plan until it is resolved. ${ver.items.map((i) => i.repair).join(" ")}` }));
     card.append(
       el("p", { class: "muted", text: `${d.profile_label}. Profile v${d.profile_version}${d.profile_reviewed ? "" : ", not reviewed by any authority"}: its roles, budget shares and timing are adjustable defaults, not rules.` }),
       el("p", { id: "c-summary", class: "lead", text: d.summary }), el("p", { class: "muted", id: "c-summary-detail", text: d.summary_detail }));
@@ -628,10 +643,10 @@
       const by = el("input", { class: "input", maxlength: "80", placeholder: "Your name", "aria-label": "Your name", value: state.senderName || "" });
       card.append(el("h3", { text: `What ${venue.name} told you about access` }),
         el("p", { class: "muted", text: "Ask the venue, then record its answer here. Tick only what the venue said it has; leave all unticked if it said none." }),
-        el("div", { class: "actions" }, ...boxes.map((b) => el("label", { class: "muted" }, b.box, " " + ACCESS_LABELS[b.k] + " "))),
+        el("div", { class: "actions", id: "a-boxes" }, ...boxes.map((b) => el("label", { class: "muted" }, b.box, " " + ACCESS_LABELS[b.k] + " "))),
         el("div", { class: "actions" }, evidence, by, el("button", { class: "btn small", id: "a-save", type: "button", text: "Record the venue's answer", on: { click: async () => {
           const res = await api(`/api/venues/${venue.vendor_id}/accessibility`, { method: "POST", body: { features: boxes.filter((b) => b.box.checked).map((b) => b.k), evidence_ref: evidence.value.trim(), entered_by: by.value.trim() } });
-          if (res.ok) again(); else msg.textContent = (res.data && res.data.details && res.data.details[0] && res.data.details[0].message) || (res.data && res.data.error) || "Could not record that.";
+          if (res.ok) { await selectPlan(state.planId, null, "community"); } else msg.textContent = (res.data && res.data.details && res.data.details[0] && res.data.details[0].message) || (res.data && res.data.error) || "Could not record that.";
         } } })));
     }
   }
@@ -1295,7 +1310,8 @@
       const r = await api("/api/intake/confirm", { method: "POST", body });
       if (r.status === 201) {
         state.tasks = r.data.tasks; await refreshList(); await selectPlan(r.data.plan.plan_id, null, "overview"); toast("Plan validated and saved as version 1.");
-        say("ai", "Done. The plan passed every hard check; see it on the right."); $("#review").hidden = true; chat.messages = []; chat.draft = {}; chat.flags = new Set();
+        const v = verification(state.plan);
+        say("ai", v.state === "verified" ? "Done. The plan passed every hard check; see it on the right." : `Done, as a provisional plan. Every check that could be decided passed, but it is not fully verified. ${v.label}. ${v.items.map((i) => i.repair).join(" ")}`); $("#review").hidden = true; chat.messages = []; chat.draft = {}; chat.flags = new Set();
         showReality(errs, r.data.reality);
       } else if (r.status === 422 && r.data && r.data.violations) { showViolations(errs, "No plan can satisfy every hard constraint. Change a value above and confirm again:", r.data.violations, []); showReality(errs, r.data.reality); renderReview(); }
       else { showViolations(errs, (r.data && r.data.error) || "Something went wrong.", [], []); renderReview(); }
