@@ -312,7 +312,7 @@ def test_pii_in_tool_results_is_masked_before_the_model_sees_it(em, pid):
 
 def test_a_repeated_question_is_served_from_cache_without_a_model(em, pid):
     a, model = make(em, tool("search_knowledge", query="does eventmate book"), answer("EventMate does not book vendors.", "how_it_works-1"))
-    q = "what about vendor booking, compare it"
+    q = "compare how eventmate handles vendor booking for an event"
     first, second = a.ask(q, pid, LOCAL_ORGANIZER), a.ask("  " + q.upper() + " ", pid, LOCAL_ORGANIZER)
     assert (first.cache, second.cache) == ("miss", "hit") and len(model.prompts) == 2 and second.answer == first.answer
 

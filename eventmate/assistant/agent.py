@@ -24,6 +24,7 @@ from eventmate.assistant.identity import Perm, Principal
 from eventmate.assistant.knowledge import KnowledgeBase, build_default
 from eventmate.assistant.langfuse import LangfuseExporter
 from eventmate.assistant.router import Route, route
+from eventmate.assistant.session import SessionStore, depends_on_context
 from eventmate.assistant.tools import Tool, ToolContext, build_tools, execute, visible_tools
 from eventmate.assistant.trace import FeedbackLog, ProposalLog, TraceBuilder, TraceLog, sha, tokens
 from eventmate.netutil import loads
@@ -79,6 +80,7 @@ class Assistant:
         self.annotations = AnnotationStore(log_dir)
         self.feedback_log = FeedbackLog(log_dir, run_id)
         self.exporter = exporter if exporter is not None else LangfuseExporter.from_env()
+        self.sessions = SessionStore()
         self._spend: Dict[str, Deque[Tuple[float, int]]] = defaultdict(deque)  # user -> (time, est. tokens) in the last hour
 
     @classmethod
@@ -113,16 +115,19 @@ class Assistant:
             return self._record(tb, result, principal, plan_id, roles)
         r = route(question)
         tb.step("route", r.kind, detail=r.reason + (f" -> {r.tool}" if r.tool else ""))
-        key = cache_key(question, roles, plan_id, state_fp, self.kb.version, self.prompt_sha)
+        memory = "" if r.kind == "direct" else self.sessions.block(plan_id, principal.user_id)  # routine questions are answered by a tool alone: no model, so no memory
+        key = cache_key(question + ("\n" + memory if depends_on_context(question) else ""), roles, plan_id, state_fp, self.kb.version, self.prompt_sha)  # an answer given with context is never reused without it
 
         def compute():
-            result, evidence_hostile = self._answer(question, plan_id, principal, r, tb)
+            result, evidence_hostile = self._answer(question, plan_id, principal, r, tb, memory)
             return result, result.outcome == "answered" and not result.proposals and not flags and not evidence_hostile
 
         result, cache_state = self.cache.get_or_compute(key, compute)
         if cache_state != "miss":
             tb.step("cache", cache_state, detail="answer reused; no model or tool ran for this question")
-        return self._record(tb, result.model_copy(update={"cache": cache_state}), principal, plan_id, roles, question)
+        final = self._record(tb, result.model_copy(update={"cache": cache_state}), principal, plan_id, roles, question)
+        self.sessions.record(plan_id, principal.user_id, question, final.answer, final.outcome)
+        return final
 
     def _record(self, tb: TraceBuilder, result: AnswerResult, principal: Principal, plan_id: str, roles: Tuple[str, ...], question: Optional[str] = None) -> AnswerResult:
         question = tb.question if question is None else question
@@ -201,7 +206,7 @@ class Assistant:
 
     # --------------------------------------------------------------- answering
 
-    def _answer(self, question: str, plan_id: str, principal: Principal, r: Route, tb: TraceBuilder) -> Tuple[AnswerResult, bool]:
+    def _answer(self, question: str, plan_id: str, principal: Principal, r: Route, tb: TraceBuilder, memory: str = "") -> Tuple[AnswerResult, bool]:
         ctx = ToolContext(self.em, principal, plan_id, self.kb, self.queue)
         evidence: List[str] = []
         cited: Dict[str, str] = {}  # id -> text that may be cited
@@ -257,7 +262,7 @@ class Assistant:
         except PromptError as exc:
             return done(NO_EVIDENCE, (), "degraded", f"prompt unavailable: {exc}")
         catalogue = "\n".join(f"- {t.name}: {t.description} Arguments: {json.dumps(t.args.model_json_schema().get('properties', {}))}" for t in visible_tools(self.tools, principal))
-        transcript = guard.fence("QUESTION", question)
+        transcript = (guard.fence("EARLIER CONVERSATION", memory) + "\n\n" if memory else "") + guard.fence("QUESTION", question)
         reasked, tier = False, r.kind
         for step in range(MAX_STEPS):
             prompt = body.replace("{tools}", catalogue).replace("{transcript}", transcript)

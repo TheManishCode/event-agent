@@ -253,6 +253,10 @@ class TestVendorBody(_Strict):
     city: Optional[str] = Field(default=None, max_length=80)
 
 
+class SessionClearBody(_Strict):
+    plan_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+
+
 class EmptyBody(_Strict):
     pass
 
@@ -573,6 +577,18 @@ def create_app(
     def assistant_ask():
         b = body(AskBody)
         return out(assistant.ask(b.question, b.plan_id, principal))  # no global lock: a slow model must not stall the app
+
+    @app.get("/api/assistant/session")
+    def assistant_session():
+        """How much conversation the assistant is holding for you on this plan (your own only)."""
+        plan_id = pid(request.args.get("plan_id", ""))
+        return jsonify({"plan_id": plan_id, "turns": assistant.sessions.turns(plan_id, principal.user_id)})
+
+    @app.post("/api/assistant/session/clear")
+    def assistant_session_clear():
+        b = body(SessionClearBody)
+        assistant.sessions.clear(b.plan_id, principal.user_id)
+        return jsonify({"plan_id": b.plan_id, "turns": 0})
 
     @app.get("/api/assistant/approvals")
     def assistant_approvals():
@@ -896,6 +912,8 @@ def create_app(
         plan_id, b = pid(plan_id), body(IdeasBody)
         with lock:
             result = em.ideas.generate(em.store.latest(plan_id), b.preferences)
+            for pref in b.preferences:  # a preference typed on the form is a user-stated fact, with its source
+                assistant.sessions.add_fact(plan_id, principal.user_id, pref, "form:ideas.preferences")
         return out(result, 201)
 
     @app.post("/api/plans/<plan_id>/ideas/<idea_id>/pin")
