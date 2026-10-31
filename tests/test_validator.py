@@ -256,3 +256,113 @@ def test_tampered_allocation_caps_are_caught(validator, draft):
     lines = tuple(l.model_copy(update={"amount": l.amount + 1}) if l.category == "venue" else l.model_copy(update={"amount": l.amount - 1}) if l.category == "caterer" else l for l in draft.allocation.lines)
     bad = draft.model_copy(update={"allocation": draft.allocation.model_copy(update={"lines": lines})})
     assert "allocation_matches_request" in failed(validator.validate(bad))
+
+
+# ---- audit: every boundary the validator draws, one rupee or one minute either side
+
+from eventmate.agents.validator import DAY  # noqa: E402
+from eventmate.plan_store import assemble_plan  # noqa: E402
+
+
+def entry(d, tid):
+    return next(e for e in d.solution.entries if e.task_id == tid)
+
+
+def day_zero(d):
+    return (d.request.event_date - d.origin.date()).days * DAY
+
+
+def with_budget(d, budget):
+    return d.model_copy(update={"request": d.request.model_copy(update={"budget_total": budget})})
+
+
+def test_budget_total_is_exact_at_the_boundary_and_the_contingency_warning_starts_one_rupee_inside_it(validator, draft):
+    total, reserve = sum(s.cost for s in draft.selections), draft.allocation.contingency
+    assert reserve > 0
+    assert "budget_total" not in failed(validator.validate(with_budget(draft, total)))
+    r = validator.validate(with_budget(draft, total - 1))
+    assert "budget_total" in failed(r) and "over by INR 1" in next(c.detail for c in r.checks if c.name == "budget_total")
+    assert not any("contingency reserve" in w for w in validator.validate(with_budget(draft, total + reserve)).warnings)
+    assert any("contingency reserve" in w for w in validator.validate(with_budget(draft, total + reserve - 1)).warnings)
+
+
+@pytest.mark.parametrize("tid,change", [
+    ("book_venue", lambda e, s: dict(start=-1, end=e.end - e.start - 1)),  # before time zero
+    ("teardown", lambda e, s: dict(start=s.horizon + 1 - (e.end - e.start), end=s.horizon + 1)),  # one minute past the horizon
+    ("event", lambda e, s: dict(start=e.start + 1, end=e.end + 1)),  # not at its fixed start
+    ("send_invitations", lambda e, s: (lambda d: dict(start=d + 1 - (e.end - e.start), end=d + 1))(next(x.deadline_end for x in s.tasks if x.id == "send_invitations"))),  # one minute after its deadline
+])
+def test_each_kind_of_schedule_bound_is_enforced(validator, draft, tid, change):
+    e = entry(draft, tid)
+    kw = change(e, draft.spec)
+    assert "schedule_bounds" in failed(validator.validate(with_entry(draft, tid, **kw)))
+    assert "schedule_bounds" not in failed(validator.validate(draft))
+
+
+def test_the_event_must_start_at_its_hour_and_last_its_length(validator, draft):
+    e = entry(draft, "event")
+    assert "event_time" in failed(validator.validate(with_entry(draft, "event", start=e.start + 1, end=e.end + 1)))
+    assert "event_time" in failed(validator.validate(with_entry(draft, "event", end=e.end + 1)))
+    assert "event_time" not in failed(validator.validate(draft))
+
+
+def test_setups_must_end_a_full_buffer_before_the_event_and_teardown_must_follow_it(validator, draft):
+    ev, buf = entry(draft, "event"), validator.policy.setup_buffer_minutes
+    dur = entry(draft, "venue_setup").end - entry(draft, "venue_setup").start
+    exact = with_entry(draft, "venue_setup", start=ev.start - buf - dur, end=ev.start - buf)
+    assert "setup_before_event" not in failed(validator.validate(exact))
+    one_late = with_entry(draft, "venue_setup", start=ev.start - buf - dur + 1, end=ev.start - buf + 1)
+    assert "setup_before_event" in failed(validator.validate(one_late))
+    td = entry(draft, "teardown")
+    assert "teardown_after_event" not in failed(validator.validate(with_entry(draft, "teardown", start=ev.end, end=ev.end + (td.end - td.start))))
+    assert "teardown_after_event" in failed(validator.validate(with_entry(draft, "teardown", start=ev.end - 1, end=ev.end - 1 + (td.end - td.start))))
+
+
+def test_invitations_must_finish_exactly_the_lead_time_before_the_event(validator, draft):
+    limit = day_zero(draft) - validator.policy.invitation_lead_days * DAY
+    e = entry(draft, "send_invitations")
+    assert "invitation_lead_time" not in failed(validator.validate(with_entry(draft, "send_invitations", start=limit - (e.end - e.start), end=limit)))
+    assert "invitation_lead_time" in failed(validator.validate(with_entry(draft, "send_invitations", start=limit - (e.end - e.start) + 1, end=limit + 1)))
+
+
+def test_the_vendor_confirmation_reminder_must_sit_inside_its_window(validator, draft):
+    lo = day_zero(draft) - validator.policy.vendor_confirmation_window_start_days * DAY
+    hi = day_zero(draft) - validator.policy.vendor_confirmation_window_end_days * DAY
+    r = entry(draft, "reminder_vendor_confirmation")
+    dur = r.end - r.start
+    assert "vendor_confirmation_window" not in failed(validator.validate(with_entry(draft, "reminder_vendor_confirmation", start=lo, end=lo + dur)))
+    assert "vendor_confirmation_window" not in failed(validator.validate(with_entry(draft, "reminder_vendor_confirmation", start=hi - dur, end=hi)))
+    assert "vendor_confirmation_window" in failed(validator.validate(with_entry(draft, "reminder_vendor_confirmation", start=lo - 1, end=lo - 1 + dur)))
+    assert "vendor_confirmation_window" in failed(validator.validate(with_entry(draft, "reminder_vendor_confirmation", start=hi - dur + 1, end=hi + 1)))
+
+
+def test_a_missing_task_a_wrong_duration_a_clash_and_a_wall_clock_mismatch_are_each_named(validator, draft):
+    gone = draft.model_copy(update={"solution": draft.solution.model_copy(update={"entries": tuple(e for e in draft.solution.entries if e.task_id != "teardown")})})
+    assert "schedule_complete" in failed(validator.validate(gone))
+    e = entry(draft, "venue_setup")
+    assert "schedule_durations" in failed(validator.validate(with_entry(draft, "venue_setup", end=e.end + 1)))
+    ev = entry(draft, "event")
+    assert "schedule_resources" in failed(validator.validate(with_entry(draft, "venue_setup", start=ev.start, end=ev.start + (e.end - e.start))))
+    drifted = draft.model_copy(update={"items": tuple(i.model_copy(update={"start": i.start + timedelta(minutes=1)}) if i.task_id == "event" else i for i in draft.items)})
+    assert "items_match_solution" in failed(validator.validate(drifted))
+    dropped = draft.model_copy(update={"items": tuple(i for i in draft.items if i.task_id != "reminder_invitation")})
+    assert "reminders_scheduled" in failed(validator.validate(dropped))
+
+
+def _parent(validator, draft, confirm=C.CATERER):
+    plan = assemble_plan(draft, validator.validate(draft), 1, None, "audit", ())
+    sels = tuple(s.model_copy(update={"booking_status": BookingStatus.CONFIRMED}) if s.category == confirm else s for s in plan.selections)
+    return plan.model_copy(update={"selections": sels})
+
+
+def test_a_confirmed_booking_cannot_be_dropped_or_moved_by_a_replan_unless_it_was_released(validator, draft):
+    parent = _parent(validator, draft)
+    dropped = validator.validate(draft, parent=parent)  # the child draft no longer shows it as confirmed
+    assert "confirmed_bookings_preserved" in failed(dropped)
+    caterer = next(s.vendor_id for s in parent.selections if s.category == C.CATERER)
+    assert "confirmed_bookings_preserved" not in failed(validator.validate(draft, parent=parent, released_vendor_ids=[caterer]))
+    kept = with_selection(draft, C.CATERER, booking_status=BookingStatus.CONFIRMED)
+    ok = validator.validate(kept, parent=parent, newly_confirmed_vendor_ids=[caterer])
+    assert not {"confirmed_bookings_preserved", "confirmed_booking_time_preserved"} & failed(ok)
+    moved = kept.model_copy(update={"items": tuple(i.model_copy(update={"start": i.start + timedelta(minutes=1), "end": i.end + timedelta(minutes=1)}) if i.task_id == "book_caterer" else i for i in kept.items)})
+    assert "confirmed_booking_time_preserved" in failed(validator.validate(moved, parent=parent, newly_confirmed_vendor_ids=[caterer]))
