@@ -139,7 +139,7 @@ T = [KnownThread("d1", "sales@v.test", NOW - timedelta(hours=2), "<sent1@x.test>
 def test_poll_returns_the_new_text_only_with_threading_headers():
     out = mail_channel(imap=FakeIMAP([raw_mail()])).poll(T)
     assert len(out) == 1 and out[0].sender == "sales@v.test" and out[0].in_reply_to == "<sent1@x.test>" and out[0].external_id == "<r1@v.test>"
-    assert out[0].body == "Rs 650 per plate." and "wrote" not in out[0].body and out[0].received_at == datetime(2026, 10, 30, 10, 0, tzinfo=timezone.utc)
+    assert out[0].body == "Rs 650 per plate." and "wrote" not in out[0].body and out[0].received_at == NOW  # the mail is dated an hour after the fake clock: a reply is never dated later than now
 
 
 def test_poll_searches_by_date_and_does_nothing_without_threads():
@@ -272,3 +272,46 @@ def test_the_channel_itself_refuses_a_recipient_that_is_not_one_plain_address(ba
     with pytest.raises(ChannelError):
         mail_channel(smtp).send(bad, "s", "b")
     assert smtp.sent == []
+
+
+# ---- audit findings: a stranger's Date header must neither break polling nor claim a time that has not happened
+
+def _dated(date):
+    m = EmailMessage()
+    m["From"], m["To"], m["Subject"], m["Message-ID"] = "Vendor <sales@v.test>", "me@x.test", "Re: Quote", "<r9@v.test>"
+    if date is not None:
+        m["Date"] = date
+    m["In-Reply-To"] = "<sent1@x.test>"
+    m.set_content("Rs 650 per plate.")
+    return m.as_bytes()
+
+
+@pytest.mark.parametrize("date", ["Fri, 31 Dec 9999 23:59:59 -1200", "Mon, 02 Jan 0001 00:00:00 +1400", "Mon, 01 Jan 2026 00:00:00 +9999", "garbage", "Fri, 30 Feb 2026 10:00:00 +0000"])
+def test_a_hostile_date_header_cannot_stop_the_poll_and_never_lands_in_the_future(date):
+    good = raw_mail()
+    out = mail_channel(imap=FakeIMAP([_dated(date), good])).poll(T)
+    assert len(out) == 2 and all(o.received_at <= NOW for o in out) and out[1].body == "Rs 650 per plate."
+
+
+def test_a_missing_date_means_now_and_a_past_date_is_kept():
+    assert mail_channel(imap=FakeIMAP([_dated(None)])).poll(T)[0].received_at == NOW
+    assert mail_channel(imap=FakeIMAP([_dated("Thu, 29 Oct 2026 10:00:00 +0000")])).poll(T)[0].received_at == datetime(2026, 10, 29, 10, 0, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize("ts", [-1e18, 1e18, float("inf"), float("nan"), 4e9])
+def test_whatsapp_timestamps_that_cannot_be_dates_skip_the_message_not_the_poll(ts):
+    good = {"id": "ok", "timestamp": int(NOW.timestamp()) + 5, "fromMe": False, "body": "fine"}
+    out = wa(FakeWaha(messages=[{"id": "bad", "timestamp": ts, "fromMe": False, "body": "x"}, good])).poll([KnownThread("d1", "919876543210", NOW, "true_x")])
+    assert "ok" in [o.external_id for o in out] and all(o.received_at <= NOW for o in out)
+
+
+def test_a_port_setting_with_look_alike_digits_is_ignored_not_a_crash():
+    assert EmailConfig.from_env({"EVENTMATE_SMTP_PORT": "²", "EVENTMATE_IMAP_PORT": "٩٩٣"}).smtp_port == 465 and EmailConfig.from_env({"EVENTMATE_SMTP_PORT": "587"}).smtp_port == 587
+    assert EmailConfig.from_env({"EVENTMATE_IMAP_PORT": "٩٩٣"}).imap_port == 993
+
+
+def test_the_connection_is_closed_when_the_login_is_refused():
+    smtp = FakeSMTP(login_error=smtplib.SMTPAuthenticationError(535, b"no"))
+    with pytest.raises(ChannelError):
+        mail_channel(smtp).send("sales@v.test", "s", "b")
+    assert smtp.closed

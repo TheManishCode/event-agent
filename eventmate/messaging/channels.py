@@ -138,7 +138,7 @@ class EmailConfig:
     def from_env(cls, env: Mapping[str, str]) -> "EmailConfig":
         def num(name: str, default: int) -> int:
             raw = env.get(name, "").strip()
-            return int(raw) if raw.isdigit() and 0 < int(raw) < 65536 else default
+            return int(raw) if raw.isascii() and raw.isdigit() and 0 < int(raw) < 65536 else default
 
         user = env.get("EVENTMATE_SMTP_USER", "").strip()
         return cls(
@@ -197,12 +197,18 @@ class EmailChannel:
             msg.set_content(body)
         except (ValueError, TypeError) as exc:  # header injection attempts end here
             raise ChannelError(f"the message could not be built: {exc}") from None
+        server = None
         try:
             server = self._smtp()
             server.login(c.user, c.password)
-        except smtplib.SMTPAuthenticationError:
-            raise ChannelError("the mail server rejected the login") from None
-        except (smtplib.SMTPException, OSError, ssl.SSLError):
+        except (smtplib.SMTPException, OSError, ssl.SSLError) as exc:
+            if server is not None:  # connected but not logged in: do not leave the connection open
+                try:
+                    server.quit()
+                except Exception:
+                    pass
+            if isinstance(exc, smtplib.SMTPAuthenticationError):
+                raise ChannelError("the mail server rejected the login") from None
             raise ChannelError("could not connect to the mail server") from None
         try:
             server.send_message(msg)
@@ -248,6 +254,16 @@ class EmailChannel:
             raise ChannelError("could not reach the mail server") from None
         return out
 
+    def _when(self, msg) -> datetime:
+        """When a message arrived. The Date header is the sender's own claim: missing, unreadable or out of range it becomes now, and a reply is never dated later than now."""
+        now = self._now()
+        try:
+            when = email.utils.parsedate_to_datetime(str(msg["Date"])) if msg["Date"] else now
+            when = (when if when.tzinfo else when.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
+        except (ValueError, TypeError, OverflowError, IndexError):
+            return now
+        return min(when, now)
+
     def _parse(self, raw: bytes) -> Optional[Inbound]:
         try:
             msg = email.message_from_bytes(raw, policy=email.policy.default)
@@ -257,10 +273,8 @@ class EmailChannel:
             bounce = _dsn(msg)
             if bounce is not None:
                 mid = str(msg.get("Message-ID", "")).strip()
-                when = email.utils.parsedate_to_datetime(str(msg["Date"])) if msg["Date"] else self._now()
-                when = when if when.tzinfo else when.replace(tzinfo=timezone.utc)
                 return Inbound(
-                    channel="email", sender=sender[:254], external_id=(mid or "nomsgid-" + hashlib.sha256(raw).hexdigest()[:32])[:400], received_at=when.astimezone(timezone.utc),
+                    channel="email", sender=sender[:254], external_id=(mid or "nomsgid-" + hashlib.sha256(raw).hexdigest()[:32])[:400], received_at=self._when(msg),
                     body=f"Delivery failure notice ({'permanent' if bounce.permanent else 'temporary'}) for {bounce.recipient[:120]}", subject=str(msg.get("Subject", ""))[:200], bounce=bounce,
                 )
             if str(msg.get("Auto-Submitted", "no")).lower() != "no" or str(msg.get("Precedence", "")).lower() in ("bulk", "junk", "list") or msg.get("List-Id"):
@@ -271,16 +285,14 @@ class EmailChannel:
                 html = msg.get_body(preferencelist=("html",))
                 text = _strip_html(html.get_content()) if html is not None else ""
             body, truncated = clean_reply_text(str(text))
-            when = email.utils.parsedate_to_datetime(str(msg["Date"])) if msg["Date"] else self._now()
-            when = when if when.tzinfo else when.replace(tzinfo=timezone.utc)
             mid = str(msg.get("Message-ID", "")).strip()
             attachments = sum(1 for _ in msg.iter_attachments())
             return Inbound(
-                channel="email", sender=sender[:254], external_id=(mid or "nomsgid-" + hashlib.sha256(raw).hexdigest()[:32])[:400], received_at=when.astimezone(timezone.utc), body=body,
+                channel="email", sender=sender[:254], external_id=(mid or "nomsgid-" + hashlib.sha256(raw).hexdigest()[:32])[:400], received_at=self._when(msg), body=body,
                 subject=str(msg.get("Subject", ""))[:200], in_reply_to=str(msg.get("In-Reply-To", "")).strip()[:400], references=str(msg.get("References", ""))[:2000],
                 attachments=min(attachments, 100), truncated=truncated,
             )
-        except (ValueError, TypeError, KeyError, LookupError):
+        except (ValueError, TypeError, KeyError, LookupError, ArithmeticError):
             return None  # one malformed message must not stop the others
 
 
@@ -413,7 +425,10 @@ class WhatsAppChannel:
                 ts, mid, text = m.get("timestamp"), m.get("id"), m.get("body")
                 if not isinstance(ts, (int, float)) or isinstance(ts, bool) or not isinstance(mid, str) or not isinstance(text, str):
                     continue
-                when = datetime.fromtimestamp(min(ts, 4e9), tz=timezone.utc)
+                try:
+                    when = min(datetime.fromtimestamp(ts, tz=timezone.utc), self._now())  # never later than now
+                except (ValueError, OverflowError, OSError):
+                    continue  # not a date: skip this message, keep the rest
                 if when < t.sent_at - timedelta(seconds=60):
                     continue
                 body, truncated = clean_reply_text(text)
