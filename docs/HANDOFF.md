@@ -4,12 +4,12 @@ Read this first, then `AI_CODING_RULES.md`, `DECISIONS.md`, `ROADMAP.md`. Update
 change as any code or decision change, and at the end of every session. Stale handoff = unfinished work.
 
 Last updated: 2026-10-31
-Updated by: Claude (assistant memory, placeholders, precise guards ADR-050)
+Updated by: Claude (audit with mutation testing, avatar: ADR-050, ADR-051, ADR-052)
 
 ## Current state
 
 - Package: `eventmate/` (sibling of `src/llm_plan`, which is untouched). Python venv at `.venv`.
-- Tests: `python -m pytest tests` → **1706 passed** (Python 3.14.8, with Fast Downward, VAL and Chromium) (2026-10-31; includes the Chromium end-to-end tests). pyflakes clean.
+- Tests: `python -m pytest tests` → **2077 passed, 0 failed, 0 skipped** (Python 3.14.8, with Fast Downward, VAL and Chromium present; 2026-10-31; includes the Chromium end-to-end tests). Without the solver variables most planning tests error, by design.
 - Git: this repository (`event-agent`) is the home of the code. Tests live in `tests/`; the package is grouped into `planning`, `pricing`, `messaging`, `followthrough`, `integrations`, `agents`, `assistant`, `web`.
 
 ### Roadmap progress (rows count only with passing tests)
@@ -106,6 +106,7 @@ Nearly all have 0-2 stars, so none counts as proven; any borrowing needs a read-
 
 ## Session log (newest first)
 
+- 2026-10-31: Audit and avatar on `fix/context-pii-guards` (ADR-051, ADR-052; not pushed, not merged). Bugs fixed with regression tests: ended or past-deadline jobs approving (and then sending) their drafts, cancel leaving requests approvable, a blocked address aborting a job's approval half-way, send caps ignoring in-flight and unknown-outcome messages, a hostile email `Date` header stopping reply polling, the assistant link guard passing any URL, the reality check's minimum ignoring each service's fixed share, intake `source` 422 and unusable-reply retry, "40 friends", idea-guard false blocks and misses, `From:` lines cutting a vendor's price, small config and connection issues. Behaviour that was right but unpinned now has tests (validator boundaries, default caps, limits, normalisation, policy file, and more). Mutation testing: harness kept outside the repo (one change per mutant, sampled, same seed); first pass over 28 modules caught 69 percent of 1,942 mutants; after the new tests, the modules re-run on the same sample went from 37 to 16 survivors (validator), 40 to 22 (jobs), 15 to 2 (claims), 34 to 19 (outreach), 28 to 17 (intake), 18 to 9 (reality), 13 to 0 (session); suppression stayed at 13 (length caps). NOT mutation-tested: `web/app.py`, `agents/vendor.py`, `replanner.py`, `scheduler.py`, `tradeoff.py`, `planner.py`, `guest.py`, `explainer.py`, `integrations/*`, `llm.py`, `symbolic.py`, `schemas.py`, `plan_store.py`, `assistant/tools.py` and `router.py` (a first attempt picked the wrong tests), `__main__.py`. The avatar (Polytoria Pauly, CC BY 4.0, vendored `model-viewer`) is in the chat card; the CSP gained one style hash, `blob:` and `wasm-unsafe-eval` (docs/ATTRIBUTIONS.md). Open: see the audit report in the conversation for findings not fixed (plan store has no parent-hash chain, web API has no default token, relative dates in the rule parser, ideas never run on a real model).
 - 2026-10-31: ADR-050 on `fix/context-pii-guards` (from 5856879; not pushed, not merged): short assistant memory, contact placeholders before model prompts, precise idea guards, computed budget percentages, one-address recipient check in the channel. Not verified live: any real model or mailbox.
 - 2026-10-31: Review fixes on `feature/discovery-contacts` (ADR-049 amendment): bounce correlation requires a recorded Message-ID (recipient-only goes to review); the bounce reason is stored and must be acknowledged before an address is re-enabled (lift or re-confirm); stop and bounce matching is documented as not authenticated and forgeable.
 
