@@ -216,3 +216,37 @@ def test_a_contact_candidate_needs_a_source_a_valid_address_and_a_real_state(bad
     ContactCandidate(**base)
     with pytest.raises(ValidationError):
         ContactCandidate(**{**base, **bad})
+
+
+# ---- audit: size limits are exact, and the page budget is honoured
+
+def test_a_website_address_of_exactly_the_maximum_length_is_read_and_one_longer_is_not():
+    ok = "https://sharma-caterers.example/" + "a" * (2048 - len("https://sharma-caterers.example/"))
+    assert len(ok) == 2048
+    f = FakeFetcher({ok: page("<p>a@sharma-caterers.example</p>")})
+    assert set(values(find_contacts(f, ok))) == {"a@sharma-caterers.example"}
+    f2 = FakeFetcher({ok + "a": page("<p>a@sharma-caterers.example</p>")})
+    res = find_contacts(f2, ok + "a")
+    assert res.found == [] and f2.asked == [] and any("not a plain http(s) address" in n for n in res.notes)
+
+
+def test_a_contact_link_longer_than_the_maximum_is_never_followed():
+    long_path = "/contact-" + "x" * 2100
+    f = FakeFetcher({SITE: page(f'<a href="{long_path}">Contact</a>a@sharma-caterers.example')})
+    find_contacts(f, SITE)
+    assert f.asked == [SITE]
+
+
+def test_the_page_budget_can_be_lowered_and_never_drops_below_one():
+    pages = {SITE: page('<a href="/contact">Contact</a>a@sharma-caterers.example'), SITE + "contact": page("b@sharma-caterers.example")}
+    one, zero, two = FakeFetcher(pages), FakeFetcher(pages), FakeFetcher(pages)
+    assert set(values(find_contacts(one, SITE, max_pages=1))) == {"a@sharma-caterers.example"} and len(one.asked) == 1
+    find_contacts(zero, SITE, max_pages=0)
+    assert len(zero.asked) == 1
+    assert set(values(find_contacts(two, SITE, max_pages=5))) == {"a@sharma-caterers.example", "b@sharma-caterers.example"} and len(two.asked) == 2
+
+
+def test_only_the_first_200_links_of_a_page_are_considered_for_addresses():
+    links = "".join(f'<a href="mailto:p{i}@sharma-caterers.example">x</a>' for i in range(210))
+    res = find_contacts(FakeFetcher({SITE: page(links)}), SITE)
+    assert len(res.found) == 5 and any("more than 5 addresses" in n for n in res.notes)

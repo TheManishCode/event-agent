@@ -53,6 +53,8 @@ solver-verified plans, provenance-tracked vendor quotes, bounded negotiation, an
 | F25 | Personalized ideas (guarded suggestions) | Accept (done 2026-10-31, ADR-045) | 3 | Templates plus optional model; never prices or claims |
 | F26 | Community events with profiles, hard checks and user-marked conditional items | Accept (done 2026-10-31, ADR-046) | 3 | No rule packs: conditional items stay not_verified until the user marks them |
 | F27 | Owner digest in-app plus optional email copy; mailbox smoke check | Accept (done 2026-10-31, ADR-047) | 3 | Real-mailbox validation still to run (docs/EMAIL_VALIDATION.md) |
+| F31 | Line-by-line audit with mutation testing: bugs fixed, behaviour pinned | Accept (done 2026-10-31, ADR-052) | 3 | Sampled, not exhaustive; some modules not swept |
+| F30 | Animated assistant avatar (CC BY model, vendored viewer, narrow CSP change) | Accept (done 2026-10-31, ADR-051) | 3 | Checked in headless Chromium only |
 | F29 | Assistant memory, contact-detail placeholders, precise idea and assistant guards | Accept (done 2026-10-31, ADR-050) | 3 | Pattern-based masking; guards are wording checks |
 | F28 | Discovered vendors: search, source-backed public contact, user-confirmed address, do-not-contact list, then the existing quote job | Accept (done 2026-10-31, ADR-049) | 3 | Discovered businesses are not vendor records; no promotion; WhatsApp discovery out of scope |
 
