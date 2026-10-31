@@ -33,7 +33,7 @@ To update either file: replace it, update the hash above, and re-run `tests/test
 
 ## The /arcade page (`cabinet.glb`, `three.min.js` and the loaders)
 
-- `cabinet.glb`: "Game-ready arcade machine" by Snji (https://sketchfab.com/snji_), https://sketchfab.com/3d-models/game-ready-arcade-machine-25fb590707034cff8b555953d66a0f7b, CC BY 4.0 (the file's own metadata says so). The patch's notes say the original artwork was replaced with EventMate's own art; that is the patch author's change and was not independently checked beyond the file's licence metadata. SHA-256: `c62e9108e9ee1af4835af895045d0e80a593411fd11e11d43e0d6f4832574a0c`
+- `cabinet.glb`: "Game-ready arcade machine" by Snji (https://sketchfab.com/snji_), https://sketchfab.com/3d-models/game-ready-arcade-machine-25fb590707034cff8b555953d66a0f7b, CC BY 4.0 (the file's own metadata says so). The patch's notes say the original artwork was replaced with EventMate's own art; that is the patch author's change and was not independently checked beyond the file's licence metadata. Modified by EventMate: the 2048 px metallic-roughness texture was downscaled to 1024 px to halve the download (2.1 MB to 1.1 MB); nothing else was changed. SHA-256: `de45e67aa8889972fa17f415aeb7ac1b12f88a6550724e9cfc188714573b84c4`
 - The attendant on that page is the same Pauly model as the chat avatar (`avatar.glb`, credited above); the patch shipped a byte-identical copy as `character.glb`, which was removed.
 - `three.min.js` (three.js r128, MIT, licence in `three.min.LICENSE.txt`) with the standard EffectComposer, bloom and GLTFLoader add-ons. SHA-256 of `three.min.js`: `9274bbcec8d96168626c732b5d31c775aa8cfb7eaa0599bec0c175908a2c1ce2`
 - Credit is shown at the bottom of the `/arcade` page and in `docs/ARCADE_UI.md`.

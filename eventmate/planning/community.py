@@ -87,6 +87,49 @@ def _clean(text, what: str, limit: int = 200) -> str:
     return text.strip()
 
 
+def _parse_item_def(it, defs: List[ItemDef]) -> ItemDef:
+    if not isinstance(it, dict) or set(it) - {"id", "title", "check_with", "triggers", "when_service"}:
+        _fail("a conditional item has unknown or missing fields")
+    iid = it.get("id")
+    if not isinstance(iid, str) or not _SLUG.fullmatch(iid) or any(d.item_id == iid for d in defs):
+        _fail(f"bad or duplicate conditional item id {iid!r}")
+    trig = tuple(it.get("triggers") or ())
+    if not trig or any(t not in _ANSWER_KEYS for t in trig):
+        _fail(f"{iid}: triggers must be answer names ({', '.join(_ANSWER_KEYS)})")
+    svc = tuple(it.get("when_service") or ())
+    if any(s not in {c.value for c in VendorCategory} for s in svc):
+        _fail(f"{iid}: when_service must be vendor categories")
+    return ItemDef(iid, _clean(it.get("title"), f"{iid}.title"), _clean(it.get("check_with"), f"{iid}.check_with"), trig, svc)
+
+
+def _parse_keywords(key: str, p: dict, seen_kw: Dict[str, str]) -> Tuple[str, ...]:
+    kws = tuple(k.strip().lower() for k in p.get("keywords", []) if isinstance(k, str) and k.strip())
+    if not kws or len(kws) != len(p.get("keywords", [])):
+        _fail(f"{key}: keywords must be non-empty text")
+    for k in kws:
+        if k in seen_kw and seen_kw[k] != key:
+            _fail(f"keyword {k!r} appears in both {seen_kw[k]} and {key}")
+        seen_kw[k] = key
+    return kws
+
+
+def _parse_profile(key: str, p, item_ids: set, seen_kw: Dict[str, str]) -> Profile:
+    if not _SLUG.fullmatch(key or "") or not isinstance(p, dict) or set(p) - {"label", "keywords", "budget_weights_bp", "event_window", "suggested_roles", "always_items"}:
+        _fail(f"profile {key!r} has a bad name or unknown fields")
+    kws = _parse_keywords(key, p, seen_kw)
+    w = p.get("budget_weights_bp")
+    if not isinstance(w, dict) or set(w) != {c.value for c in VendorCategory} or any(not isinstance(v, int) or isinstance(v, bool) or v < 0 for v in w.values()) or sum(w.values()) <= 0:
+        _fail(f"{key}: budget_weights_bp must give a non-negative whole number for venue, caterer and photographer")
+    win = p.get("event_window") or {}
+    if not (isinstance(win.get("start_hour"), int) and 0 <= win["start_hour"] <= 23 and isinstance(win.get("minutes"), int) and 30 <= win["minutes"] <= 1440):
+        _fail(f"{key}: event_window needs start_hour 0-23 and minutes 30-1440")
+    roles = tuple((_clean(r.get("role"), f"{key} role", 40), _clean(r.get("note", "-"), f"{key} role note")) for r in p.get("suggested_roles", []) if isinstance(r, dict))
+    always = tuple(p.get("always_items") or ())
+    if any(a not in item_ids for a in always):
+        _fail(f"{key}: always_items must be conditional item ids")
+    return Profile(key, _clean(p.get("label"), f"{key}.label", 60), kws, dict(w), win["start_hour"], win["minutes"], roles, always)
+
+
 def parse_profiles(doc) -> Profiles:
     if not isinstance(doc, dict) or doc.get("schema_version") != 1 or not isinstance(doc.get("version"), int) or not isinstance(doc.get("reviewed"), bool):
         _fail("unsupported schema_version or missing version/reviewed")
@@ -95,42 +138,10 @@ def parse_profiles(doc) -> Profiles:
         _fail("no profiles")
     defs: List[ItemDef] = []
     for it in doc.get("conditional_items", []):
-        if not isinstance(it, dict) or set(it) - {"id", "title", "check_with", "triggers", "when_service"}:
-            _fail("a conditional item has unknown or missing fields")
-        iid = it.get("id")
-        if not isinstance(iid, str) or not _SLUG.fullmatch(iid) or any(d.item_id == iid for d in defs):
-            _fail(f"bad or duplicate conditional item id {iid!r}")
-        trig = tuple(it.get("triggers") or ())
-        if not trig or any(t not in _ANSWER_KEYS for t in trig):
-            _fail(f"{iid}: triggers must be answer names ({', '.join(_ANSWER_KEYS)})")
-        svc = tuple(it.get("when_service") or ())
-        if any(s not in {c.value for c in VendorCategory} for s in svc):
-            _fail(f"{iid}: when_service must be vendor categories")
-        defs.append(ItemDef(iid, _clean(it.get("title"), f"{iid}.title"), _clean(it.get("check_with"), f"{iid}.check_with"), trig, svc))
+        defs.append(_parse_item_def(it, defs))
     item_ids = {d.item_id for d in defs}
-    out: Dict[str, Profile] = {}
     seen_kw: Dict[str, str] = {}
-    for key, p in raw.items():
-        if not _SLUG.fullmatch(key or "") or not isinstance(p, dict) or set(p) - {"label", "keywords", "budget_weights_bp", "event_window", "suggested_roles", "always_items"}:
-            _fail(f"profile {key!r} has a bad name or unknown fields")
-        kws = tuple(k.strip().lower() for k in p.get("keywords", []) if isinstance(k, str) and k.strip())
-        if not kws or len(kws) != len(p.get("keywords", [])):
-            _fail(f"{key}: keywords must be non-empty text")
-        for k in kws:
-            if k in seen_kw and seen_kw[k] != key:
-                _fail(f"keyword {k!r} appears in both {seen_kw[k]} and {key}")
-            seen_kw[k] = key
-        w = p.get("budget_weights_bp")
-        if not isinstance(w, dict) or set(w) != {c.value for c in VendorCategory} or any(not isinstance(v, int) or isinstance(v, bool) or v < 0 for v in w.values()) or sum(w.values()) <= 0:
-            _fail(f"{key}: budget_weights_bp must give a non-negative whole number for venue, caterer and photographer")
-        win = p.get("event_window") or {}
-        if not (isinstance(win.get("start_hour"), int) and 0 <= win["start_hour"] <= 23 and isinstance(win.get("minutes"), int) and 30 <= win["minutes"] <= 1440):
-            _fail(f"{key}: event_window needs start_hour 0-23 and minutes 30-1440")
-        roles = tuple((_clean(r.get("role"), f"{key} role", 40), _clean(r.get("note", "-"), f"{key} role note")) for r in p.get("suggested_roles", []) if isinstance(r, dict))
-        always = tuple(p.get("always_items") or ())
-        if any(a not in item_ids for a in always):
-            _fail(f"{key}: always_items must be conditional item ids")
-        out[key] = Profile(key, _clean(p.get("label"), f"{key}.label", 60), kws, dict(w), win["start_hour"], win["minutes"], roles, always)
+    out = {key: _parse_profile(key, p, item_ids, seen_kw) for key, p in raw.items()}
     default = doc.get("default_subtype")
     if default not in out:
         _fail("default_subtype is not a profile")
@@ -265,6 +276,47 @@ def _funding(d: PlanDraft) -> ConstraintCheck:
     return _chk("funding_vs_budget", basis >= need, detail)
 
 
+def _shift_span(sh, ps: int, pe: int) -> Tuple[int, int]:
+    """A shift's absolute (start, end) minutes, clipped to its phase; an open end runs to the end of the phase."""
+    return ps + sh.start_min, min(pe, ps + (sh.end_min if sh.end_min is not None else pe - ps))
+
+
+def _slot_problems(d: PlanDraft, det: CommunityDetails, windows: Dict[str, Tuple[int, int]]) -> List[str]:
+    """Each confirmed slot must lie inside its phase and be covered by enough distinct volunteers for its whole length."""
+    problems: List[str] = []
+    for slot in det.slots:
+        if slot.phase not in windows:
+            problems.append(f"{slot.role} ({slot.phase}): the plan has no {slot.phase} phase")
+            continue
+        ps, pe = windows[slot.phase]
+        s0, s1 = ps + slot.start_min, ps + (slot.end_min if slot.end_min is not None else pe - ps)
+        if s0 >= pe or s1 > pe or s1 <= s0:
+            problems.append(f"{slot.role} ({slot.phase}): the slot lies outside its phase ({pe - ps} minutes long)")
+            continue
+        role = slot.role.casefold()
+        covering = [(sh, *_shift_span(sh, ps, pe)) for sh in det.shifts if sh.phase == slot.phase and sh.role.casefold() == role]
+        points = sorted({s0, s1} | {p for _, a, b in covering for p in (a, b) if s0 < p < s1})
+        worst, where = slot.needed, (s0, s1)
+        for a, b in zip(points, points[1:]):
+            n = len({sh.volunteer for sh, x, y in covering if x <= a and y >= b})
+            if n < worst:
+                worst, where = n, (a, b)
+        if worst < slot.needed:
+            problems.append(f"{slot.role} ({slot.phase}) has {worst} of {slot.needed} from {_hhmm(where[0], d.origin)} to {_hhmm(where[1], d.origin)}")
+    return problems
+
+
+def _double_booked(det: CommunityDetails, windows: Dict[str, Tuple[int, int]]) -> List[str]:
+    """Volunteers with two overlapping shifts."""
+    spans: Dict[str, List[Tuple[int, int]]] = {}
+    for sh in det.shifts:
+        if sh.phase in windows:
+            a, b = _shift_span(sh, *windows[sh.phase])
+            if b > a:
+                spans.setdefault(sh.volunteer, []).append((a, b))
+    return sorted(who for who, s in spans.items() if any(s[i][0] < s[j][1] and s[j][0] < s[i][1] for i in range(len(s)) for j in range(i + 1, len(s))))
+
+
 def _volunteers(d: PlanDraft) -> Tuple[Optional[ConstraintCheck], List[UnverifiedItem]]:
     det = d.request.community or CommunityDetails()
     in_play = bool(det.volunteers or det.slots or det.shifts)
@@ -276,38 +328,8 @@ def _volunteers(d: PlanDraft) -> Tuple[Optional[ConstraintCheck], List[Unverifie
             label="setup and cleanup owners not named", blocks_verified=False,  # planning guidance, not a stated requirement of the user
         ))
     windows = _phase_windows(d)
-    problems: List[str] = []
-    abs_shifts: Dict[str, List[Tuple[int, int, str]]] = {}
-    for sh in det.shifts:
-        if sh.phase not in windows:
-            continue
-        ps, pe = windows[sh.phase]
-        a, b = ps + sh.start_min, min(pe, ps + (sh.end_min if sh.end_min is not None else pe - ps))
-        if b > a:
-            abs_shifts.setdefault(sh.volunteer, []).append((a, b, f"{sh.role} ({sh.phase})"))
-    for slot in det.slots:
-        if slot.phase not in windows:
-            problems.append(f"{slot.role} ({slot.phase}): the plan has no {slot.phase} phase")
-            continue
-        ps, pe = windows[slot.phase]
-        s0, s1 = ps + slot.start_min, ps + (slot.end_min if slot.end_min is not None else pe - ps)
-        if s0 >= pe or s1 > pe or s1 <= s0:
-            problems.append(f"{slot.role} ({slot.phase}): the slot lies outside its phase ({pe - ps} minutes long)")
-            continue
-        role = slot.role.casefold()
-        covering = [(sh, ps + sh.start_min, min(pe, ps + (sh.end_min if sh.end_min is not None else pe - ps))) for sh in det.shifts if sh.phase == slot.phase and sh.role.casefold() == role]
-        points = sorted({s0, s1} | {p for _, a, b in covering for p in (a, b) if s0 < p < s1})
-        worst, where = slot.needed, (s0, s1)
-        for a, b in zip(points, points[1:]):
-            n = len({sh.volunteer for sh, x, y in covering if x <= a and y >= b})
-            if n < worst:
-                worst, where = n, (a, b)
-        if worst < slot.needed:
-            problems.append(f"{slot.role} ({slot.phase}) has {worst} of {slot.needed} from {_hhmm(where[0], d.origin)} to {_hhmm(where[1], d.origin)}")
-    doubled = sorted(
-        who for who, spans in abs_shifts.items()
-        if any(spans[i][0] < spans[j][1] and spans[j][0] < spans[i][1] for i in range(len(spans)) for j in range(i + 1, len(spans)))
-    )
+    problems = _slot_problems(d, det, windows)
+    doubled = _double_booked(det, windows)
     if doubled:
         problems.append("double-booked at the same time: " + ", ".join(doubled))
     if in_play:

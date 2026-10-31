@@ -98,21 +98,25 @@ def _words(text: str) -> str:
     return " ".join(text.split())
 
 
-def guard_idea(item: dict, vendor_names: Iterable[str], available_fields: Optional[Sequence[str]] = None) -> Optional[str]:
-    """None if the idea may be shown, otherwise "<category>: <detail>". Order matters only for which reason is reported first."""
+def _shape_problem(item, available_fields: Optional[Sequence[str]]) -> Optional[str]:
+    """Is it the right shape, with a known kind and only facts that were actually provided?"""
     if not isinstance(item, dict):
         return "shape: not an object"
     if item.get("kind") not in _KINDS:
         return "kind: not one of " + ", ".join(_KINDS)
-    texts = {k: item.get(k, "") for k in ("title", "why", "est_cost_note")}
-    if any(not isinstance(v, str) for v in texts.values()) or not texts["title"].strip() or not texts["why"].strip():
+    texts = [item.get(k, "") for k in ("title", "why", "est_cost_note")]
+    if any(not isinstance(v, str) for v in texts) or not texts[0].strip() or not texts[1].strip():
         return "shape: title and why must be text"
     fields = item.get("fields_used")
     if not isinstance(fields, (list, tuple)) or not fields or any(f not in IDEA_FIELDS for f in fields):
         return "fields: must name at least one known fact"
     if available_fields is not None and any(f not in available_fields for f in fields):
         return "fields: claims a fact that was not provided"
-    blob = " ".join(texts.values())
+    return None
+
+
+def _content_problem(blob: str, cost_note: str) -> Optional[str]:
+    """Markup, links, prices, availability, capacity, hazards, instructions and cultural claims: none may appear in an idea."""
     if _MARKUP.search(blob):
         return "markup: not allowed"
     if _LINK.search(blob):
@@ -121,7 +125,7 @@ def guard_idea(item: dict, vendor_names: Iterable[str], available_fields: Option
         return "shape: control characters"
     if mentions_price(blob):
         return "price: states a price"
-    if re.search(r"\d", texts["est_cost_note"]) or re.search(r"\b(?:hundred|thousand|million)\b", texts["est_cost_note"], re.I):
+    if re.search(r"\d", cost_note) or re.search(r"\b(?:hundred|thousand|million)\b", cost_note, re.I):
         return "price: the cost note contains a number"
     if _AVAILABILITY.search(blob):
         return "availability: states or implies availability"
@@ -134,14 +138,29 @@ def guard_idea(item: dict, vendor_names: Iterable[str], available_fields: Option
         return "hazard: instruction: text that tries to instruct the assistant"
     if _CULTURAL.search(blob):
         return "cultural: makes a tradition, ritual or religious claim"
+    return None
+
+
+def _vendor_problem(blob: str, vendor_names: Iterable[str]) -> Optional[str]:
+    """An idea may only name businesses that are in the database."""
     known = [v.casefold() for v in vendor_names if v]
-    for m in list(_BUSINESS.finditer(blob)):
+    for m in _BUSINESS.finditer(blob):
         if not _generic_phrase(m.group(0)) and not any(v in m.group(0).casefold() for v in known):
             return f"vendor: names a business that is not in the database ({_words(m.group(0))[:40]})"
     for m in _BOOK_NAME.finditer(blob):
         if not any(v in m.group(0).casefold() for v in known):
             return f"vendor: names a business that is not in the database ({_words(m.group(0))[:40]})"
     return None
+
+
+def guard_idea(item: dict, vendor_names: Iterable[str], available_fields: Optional[Sequence[str]] = None) -> Optional[str]:
+    """None if the idea may be shown, otherwise "<category>: <detail>". Order matters only for which reason is reported first."""
+    problem = _shape_problem(item, available_fields)
+    if problem:
+        return problem
+    texts = {k: item.get(k, "") for k in ("title", "why", "est_cost_note")}
+    blob = " ".join(texts.values())
+    return _content_problem(blob, texts["est_cost_note"]) or _vendor_problem(blob, vendor_names)
 
 
 def idea_review_note(item: dict) -> str:

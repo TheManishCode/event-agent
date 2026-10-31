@@ -12,7 +12,7 @@ It never decides that a plan is acceptable: the Validator Agent does that.
 from __future__ import annotations
 
 from itertools import product
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 from eventmate.arcade_pulse import pulse as _arcade_pulse
 from eventmate.agents.scheduler import SchedulingAgent
@@ -48,6 +48,57 @@ BOOKING_TASK = {
 # How structural a failed constraint is: money and preferences are easy to fix, city and
 # booking status are not. Used to show the nearest misses as alternatives.
 _FIX_COST = {"budget_cap": 1, "dietary": 2, "venue_setting": 2, "capacity": 3, "date_availability": 4, "booking_status": 8, "city": 9}
+
+
+class _Opt(NamedTuple):
+    """One vendor option for a category: a shortlisted candidate, or the user's confirmed booking (candidate is None)."""
+
+    category: VendorCategory
+    vendor_id: str
+    name: str
+    cost: int
+    score: float
+    source: str
+    status: BookingStatus
+    candidate: Optional[VendorCandidate]
+
+
+def _total(combo) -> int:
+    return sum(o.cost for o in combo)
+
+
+def _rank(combo) -> tuple:
+    """Highest combined score first, then cheapest, then vendor ids (so ties are deterministic)."""
+    return (-round(sum(o.score for o in combo), 6), _total(combo), [o.vendor_id for o in combo])
+
+
+def _options_for(category, by_cat, forced) -> List[_Opt]:
+    if category in forced:
+        f = forced[category]
+        return [_Opt(category, f.vendor_id, f.name, f.cost, f.score, f.source, f.booking_status, None)]
+    return [_Opt(category, x.vendor_id, x.name, x.estimated_cost, x.score, x.source, BookingStatus.AVAILABLE, x) for x in by_cat[category].candidates]
+
+
+def _affordable(request, allocation, combos):
+    """(pool, warnings, violations): combinations that fit the budget with the reserve, else without it (with a warning), else a violation."""
+    strict = [c for c in combos if _total(c) <= request.budget_total - allocation.contingency]
+    if strict:
+        return strict, [], None
+    loose = [c for c in combos if _total(c) <= request.budget_total]
+    if not loose:
+        cheapest = min(_total(c) for c in combos)
+        return None, [], [
+            ConstraintViolation(
+                constraint="total_budget",
+                detail=f"the cheapest eligible combination costs INR {cheapest:,}; budget is INR {request.budget_total:,}",
+                repair=f"raise the budget to at least INR {cheapest:,}, drop a service, or reduce the guest count",
+            )
+        ]
+    warning = (
+        f"contingency reserve of INR {allocation.contingency:,} is not fully available: cheapest combination "
+        f"INR {min(_total(c) for c in loose):,} of budget INR {request.budget_total:,}"
+    )
+    return loose, [warning], None
 
 
 def _miss_distance(rejected) -> Tuple[int, str]:
@@ -143,108 +194,85 @@ class PlannerAgent:
     # ------------------------------------------------------- vendor choice
 
     def _select(self, request, allocation, categories, by_cat, forced):
-        options: List[List[Tuple[VendorCategory, str, str, int, float, str, BookingStatus, Optional[VendorCandidate]]]] = []
-        for c in categories:
-            if c in forced:
-                f = forced[c]
-                options.append([(c, f.vendor_id, f.name, f.cost, f.score, f.source, f.booking_status, None)])
-            else:
-                options.append([(c, x.vendor_id, x.name, x.estimated_cost, x.score, x.source, BookingStatus.AVAILABLE, x) for x in by_cat[c].candidates])
+        options = [_options_for(c, by_cat, forced) for c in categories]
         combos = list(product(*options))
-        total = lambda combo: sum(o[3] for o in combo)  # noqa: E731
-        rank = lambda combo: (-round(sum(o[4] for o in combo), 6), total(combo), [o[1] for o in combo])  # noqa: E731
-        strict = [c for c in combos if total(c) <= request.budget_total - allocation.contingency]
-        warnings: List[str] = []
-        if strict:
-            pool = strict
-        else:
-            loose = [c for c in combos if total(c) <= request.budget_total]
-            if not loose:
-                cheapest = min(total(c) for c in combos)
-                return [
-                    ConstraintViolation(
-                        constraint="total_budget",
-                        detail=f"the cheapest eligible combination costs INR {cheapest:,}; budget is INR {request.budget_total:,}",
-                        repair=f"raise the budget to at least INR {cheapest:,}, drop a service, or reduce the guest count",
-                    )
-                ]
-            pool = loose
-            warnings.append(
-                f"contingency reserve of INR {allocation.contingency:,} is not fully available: cheapest combination "
-                f"INR {min(total(c) for c in loose):,} of budget INR {request.budget_total:,}"
-            )
-        ranked = sorted(pool, key=rank)
+        pool, warnings, violations = _affordable(request, allocation, combos)
+        if violations:
+            return violations
+        ranked = sorted(pool, key=_rank)
         best, runners = ranked[0], ranked[1:3]
-        cheapest = min(combos, key=lambda c: (total(c), rank(c)))
+        cheapest = min(combos, key=lambda c: (_total(c), _rank(c)))
+        selections = [self._selection(request, c, best, cheapest, options[idx], idx, ranked, by_cat.get(c)) for idx, c in enumerate(categories)]
+        self._log_selection(request, categories, selections, best, runners, cheapest, ranked, len(combos), len(pool))
+        return tuple(selections), warnings
 
-        selections: List[VendorSelection] = []
-        for idx, c in enumerate(categories):
-            o = best[idx]
-            others = [x for x in options[idx] if x[1] != o[1]]
-            alts = [
-                Alternative(
-                    option=x[2],
-                    outcome=f"INR {x[3]:,}, score {x[4]}",
-                    reason_not_chosen="the best affordable combination is higher-scoring overall"
-                    if any(x[1] == r[idx][1] for r in ranked)
-                    else "its combinations exceed the budget",
-                )
-                for x in others[:3]
-            ]
-            if o[7] is not None:
-                for rej in sorted(by_cat[c].rejected, key=_miss_distance)[:2]:  # near misses first
-                    alts.append(Alternative(option=rej.name, outcome="rejected", reason_not_chosen="; ".join(f"{k.name}: {k.detail}" for k in rej.failed)))
-            confirmed = o[6] == BookingStatus.CONFIRMED
-            justification = (
-                f"{o[2]} is a user-confirmed booking and is kept."
-                if confirmed
-                else f"{o[2]} (INR {o[3]:,}, score {o[4]}) is part of the highest-scoring combination "
-                f"(INR {total(best):,} total) that fits the budget."
+    @staticmethod
+    def _selection(request, category, best, cheapest, opts, idx, ranked, shortlist) -> VendorSelection:
+        """One chosen vendor with its honest alternatives: the other candidates and the nearest rejections."""
+        o = best[idx]
+        alts = [
+            Alternative(
+                option=x.name,
+                outcome=f"INR {x.cost:,}, score {x.score}",
+                reason_not_chosen="the best affordable combination is higher-scoring overall"
+                if any(x.vendor_id == r[idx].vendor_id for r in ranked)
+                else "its combinations exceed the budget",
             )
-            if cheapest[idx][1] != o[1] and not confirmed:
-                justification += f" The cheapest combination used {cheapest[idx][2]} (INR {cheapest[idx][3]:,}) but scored lower."
-            selections.append(
-                VendorSelection(
-                    category=c,
-                    vendor_id=o[1],
-                    name=o[2],
-                    cost=o[3],
-                    booking_status=o[6],
-                    score=o[4],
-                    justification=justification,
-                    alternatives=tuple(alts),
-                    no_alternative_reason=None if alts else ("user-confirmed booking: the user already committed to this vendor" if confirmed else f"only {o[2]} exists in the database for {request.city}"),
-                    source=o[5],
-                )
-            )
+            for x in [x for x in opts if x.vendor_id != o.vendor_id][:3]
+        ]
+        if o.candidate is not None:
+            for rej in sorted(shortlist.rejected, key=_miss_distance)[:2]:  # near misses first
+                alts.append(Alternative(option=rej.name, outcome="rejected", reason_not_chosen="; ".join(f"{k.name}: {k.detail}" for k in rej.failed)))
+        confirmed = o.status == BookingStatus.CONFIRMED
+        justification = (
+            f"{o.name} is a user-confirmed booking and is kept."
+            if confirmed
+            else f"{o.name} (INR {o.cost:,}, score {o.score}) is part of the highest-scoring combination "
+            f"(INR {_total(best):,} total) that fits the budget."
+        )
+        if cheapest[idx].vendor_id != o.vendor_id and not confirmed:
+            justification += f" The cheapest combination used {cheapest[idx].name} (INR {cheapest[idx].cost:,}) but scored lower."
+        return VendorSelection(
+            category=category,
+            vendor_id=o.vendor_id,
+            name=o.name,
+            cost=o.cost,
+            booking_status=o.status,
+            score=o.score,
+            justification=justification,
+            alternatives=tuple(alts),
+            no_alternative_reason=None if alts else ("user-confirmed booking: the user already committed to this vendor" if confirmed else f"only {o.name} exists in the database for {request.city}"),
+            source=o.source,
+        )
+
+    def _log_selection(self, request, categories, selections, best, runners, cheapest, ranked, n_combos, n_pool) -> None:
         self.logs.decisions.log(
             request_id=request.request_id,
             agent=self.agent_name,
             decision_type=DecisionType.RECOMMENDATION,
-            summary="Selected " + ", ".join(f"{s.category.value}: {s.name}" for s in selections) + f" for INR {total(best):,}",
+            summary="Selected " + ", ".join(f"{s.category.value}: {s.name}" for s in selections) + f" for INR {_total(best):,}",
             alternatives=tuple(
                 Alternative(
-                    option=" + ".join(o[2] for o in r),
-                    outcome=f"INR {total(r):,}, score {round(sum(o[4] for o in r), 4)}",
+                    option=" + ".join(o.name for o in r),
+                    outcome=f"INR {_total(r):,}, score {round(sum(o.score for o in r), 4)}",
                     reason_not_chosen="lower combined score than the selected combination",
                 )
                 for r in runners
             )
             + (
-                (Alternative(option=" + ".join(o[2] for o in cheapest), outcome=f"INR {total(cheapest):,}", reason_not_chosen="cheapest, but lower combined score"),)
+                (Alternative(option=" + ".join(o.name for o in cheapest), outcome=f"INR {_total(cheapest):,}", reason_not_chosen="cheapest, but lower combined score"),)
                 if cheapest != best and cheapest not in runners
                 else ()
             ),
             no_alternative_reason=None if len(ranked) > 1 or cheapest != best else "only one affordable combination exists",
             constraints_checked=(
-                ConstraintCheck(name="total_budget", passed=True, detail=f"INR {total(best):,} <= INR {request.budget_total:,}"),
+                ConstraintCheck(name="total_budget", passed=True, detail=f"INR {_total(best):,} <= INR {request.budget_total:,}"),
                 ConstraintCheck(name="one_vendor_per_category", passed=True, detail=", ".join(c.value for c in categories)),
             ),
-            justification=f"Exhaustive search over {len(combos)} combination(s); {len(pool)} affordable. Highest combined score wins, then lowest cost.",
+            justification=f"Exhaustive search over {n_combos} combination(s); {n_pool} affordable. Highest combined score wins, then lowest cost.",
             confidence=0.9 if len(ranked) > 1 else 0.6,
             source="rule:vendor_selection",
         )
-        return tuple(selections), warnings
 
     def _fail(self, request, summary, violations) -> None:
         self.logs.decisions.log(

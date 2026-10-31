@@ -101,3 +101,11 @@ def test_assets_are_gzipped_only_when_asked_and_round_trip(client):
         zipped = client.get(f"/static/{name}", headers={"Accept-Encoding": "gzip, deflate"})
         assert zipped.headers["Content-Encoding"] == "gzip" and "Accept-Encoding" in zipped.headers["Vary"]
         assert len(zipped.data) < len(raw) and gzip.decompress(zipped.data) == raw
+
+
+def test_the_cabinet_file_matches_the_hash_recorded_in_the_attributions():
+    import hashlib
+
+    notes = (STATIC.parent.parent.parent / "docs/ATTRIBUTIONS.md").read_text()
+    assert hashlib.sha256((STATIC / "cabinet.glb").read_bytes()).hexdigest() in notes  # substituting the file must be visible
+    assert "downscaled" in notes and "CC BY 4.0" in notes
