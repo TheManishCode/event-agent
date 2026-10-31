@@ -97,7 +97,21 @@ class Channel(Protocol):
 
 # ----------------------------------------------------------------- text hygiene
 
-_QUOTE_START = re.compile(r"^(?:On .{5,200} wrote:|-{2,}\s*Original Message\s*-{2,}|_{5,}|From:\s.+|Sent from my .+)\s*$", re.I)
+_QUOTE_START = re.compile(r"^(?:On .{5,200} wrote:|-{2,}\s*Original Message\s*-{2,}|_{5,}|Sent from my .+)\s*$", re.I)
+_FROM_LINE = re.compile(r"^From:\s.+$", re.I)
+_HEADER_LINE = re.compile(r"^(?:Sent|Date|To|Cc|Subject):\s", re.I)
+
+
+def _starts_quoted_history(lines: List[str], i: int) -> bool:
+    """A line that opens quoted history. "From: ..." counts only when mail-header lines follow it (Sent, To, Subject...): a vendor writing
+    "From: INR 66,000 onwards" is giving a price, and cutting the reply there would lose it."""
+    line = lines[i].strip()
+    if _QUOTE_START.match(line):
+        return True
+    if _FROM_LINE.match(line):
+        following = [x.strip() for x in lines[i + 1:i + 6] if x.strip()][:3]
+        return any(_HEADER_LINE.match(x) for x in following)
+    return False
 
 
 def clean_reply_text(raw: str) -> Tuple[str, bool]:
@@ -105,8 +119,9 @@ def clean_reply_text(raw: str) -> Tuple[str, bool]:
     raw = raw.replace("\r\n", "\n").replace("\r", "\n")
     raw = "".join(ch for ch in raw if ch in "\n\t" or unicodedata.category(ch) != "Cc")
     kept: List[str] = []
-    for line in raw.split("\n"):
-        if kept and any(k.strip() for k in kept) and _QUOTE_START.match(line.strip()):
+    lines = raw.split("\n")
+    for i, line in enumerate(lines):
+        if kept and any(k.strip() for k in kept) and _starts_quoted_history(lines, i):
             break
         if line.lstrip().startswith(">"):
             continue

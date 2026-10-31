@@ -315,3 +315,14 @@ def test_the_connection_is_closed_when_the_login_is_refused():
     with pytest.raises(ChannelError):
         mail_channel(smtp).send("sales@v.test", "s", "b")
     assert smtp.closed
+
+
+@pytest.mark.parametrize("raw,kept", [
+    ("Our rate is as below.\nFrom: INR 66,000 for the event\nTotal includes service staff.", "Our rate is as below.\nFrom: INR 66,000 for the event\nTotal includes service staff."),
+    ("Yes.\nFrom: Asha <a@x.test>\nSent: Monday, 26 October 2026 10:00\nTo: Vendor\nSubject: Quote\nold text", "Yes."),
+    ("Yes.\nFrom: Asha <a@x.test>\n\nTo: Vendor\nold text", "Yes."),
+    ("Price list\nFrom: 5000\nTo: 8000 depending on guests", "Price list"),  # a "To:" line after "From:" looks like a header block: the safe reading is the quoted-mail one
+    ("Hello\nFrom: our kitchen in Pune\nWe start at 650 per plate", "Hello\nFrom: our kitchen in Pune\nWe start at 650 per plate"),
+])
+def test_a_from_line_cuts_the_reply_only_when_it_opens_a_mail_header_block(raw, kept):
+    assert clean_reply_text(raw)[0] == kept
