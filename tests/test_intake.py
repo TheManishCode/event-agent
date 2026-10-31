@@ -1,5 +1,5 @@
 import json
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -312,3 +312,77 @@ def test_a_group_word_stands_in_for_guests_only_when_no_explicit_count_exists(lo
 
 def test_an_explicit_guest_count_wins_over_group_words(logs):
     assert turn(logs, ["2 friends will perform for 120 guests in Pune on 2026-12-12 with 200000 budget"]).draft.guest_count == 120
+
+
+# ---- audit: what confirming does to a draft, and the limits around it
+
+from eventmate.schemas import EventType, VendorCategory  # noqa: E402
+
+
+def full(**kw):
+    base = dict(event_type=EventType.BIRTHDAY, guest_count=40, city="Pune", event_date=date(2026, 12, 12), budget_total=90_000, services=(VendorCategory.VENUE, VendorCategory.CATERER))
+    base.update(kw)
+    return IntakeDraft(**base)
+
+
+def test_an_event_today_is_allowed_yesterday_and_beyond_three_years_are_not():
+    assert intake.to_request(full(event_date=TODAY), "x", TODAY).event_date == TODAY
+    with pytest.raises(IntakeError, match="in the past"):
+        intake.to_request(full(event_date=TODAY - timedelta(days=1)), "x", TODAY)
+    limit = TODAY + timedelta(days=intake.mgr.MAX_EVENT_AHEAD_DAYS)
+    assert intake.to_request(full(event_date=limit), "x", TODAY).event_date == limit
+    with pytest.raises(IntakeError, match="more than 3 years"):
+        intake.to_request(full(event_date=limit + timedelta(days=1)), "x", TODAY)
+
+
+def test_a_venue_is_always_added_and_dietary_needs_add_a_caterer_with_the_reason_recorded():
+    r = intake.to_request(full(services=(VendorCategory.CATERER,)), "x", TODAY)
+    assert r.services[0] == VendorCategory.VENUE and any("a venue is always required" in a for a in r.assumptions)
+    r = intake.to_request(full(services=(VendorCategory.VENUE,), dietary=(intake.DietaryRequirement.VEGETARIAN,)), "x", TODAY)
+    assert VendorCategory.CATERER in r.services and any("caterer added to services" in a for a in r.assumptions)
+    r = intake.to_request(full(dietary=(intake.DietaryRequirement.VEGETARIAN,)), "x", TODAY)
+    assert not any("caterer added" in a or "venue is always" in a for a in r.assumptions)
+
+
+def test_missing_choices_are_stated_as_assumptions_and_lower_the_confidence_by_a_tenth_each():
+    r = intake.to_request(full(event_type=None), "x", TODAY)
+    assert r.event_type == EventType.OTHER and any("event type not given" in a for a in r.assumptions) and any("venue setting not specified" in a for a in r.assumptions)
+    assert r.parse_confidence == 0.8  # the approval note plus two assumptions
+    assert intake.to_request(full(event_type=None, venue_setting=intake.VenueSetting.INDOOR), "x", TODAY).parse_confidence == 0.9
+    assert intake.to_request(full(venue_setting=intake.VenueSetting.INDOOR), "x", TODAY).parse_confidence == 1.0
+
+
+def test_the_confirmed_text_is_kept_bounded_and_never_empty():
+    assert intake.to_request(full(), "   ", TODAY).raw_text == "confirmed on the intake review card"
+    assert len(intake.to_request(full(), "x" * (intake.mgr.MAX_TEXT_CHARS + 50), TODAY).raw_text) == intake.mgr.MAX_TEXT_CHARS
+
+
+def test_an_impossible_budget_never_reaches_the_request(logs):
+    with pytest.raises(ValueError):
+        full(budget_total=10**13)  # the draft itself refuses it, so to_request's own validation net is a second line of defence
+
+
+def test_message_count_and_length_limits_are_exact(logs):
+    ok = ["hello"] * intake.MAX_MESSAGES
+    assert intake.check_messages(ok) == ok
+    for bad in (["hello"] * (intake.MAX_MESSAGES + 1), [], ["x" * (intake.MAX_MESSAGE_CHARS + 1)], [""], ["  "], [5]):
+        with pytest.raises(IntakeError):
+            intake.check_messages(bad)
+    assert intake.check_messages(["x" * intake.MAX_MESSAGE_CHARS])
+
+
+def test_a_date_in_the_past_read_by_the_model_is_dropped_with_a_note(logs):
+    t = turn(logs, ["Birthday for 40 guests in Pune, 90000 budget"], FakeLLM({**GOOD, "event_date": "2026-10-01", "guest_count": 40, "budget_inr": 90000}))
+    assert t.draft.event_date is None and any("is in the past" in n for n in t.notes) and "event_date" in t.missing
+
+
+def test_a_city_with_no_vendor_records_is_flagged_but_a_known_one_is_not(logs):
+    assert any("no vendor records for Nagpur" in n for n in turn(logs, ["Birthday for 40 guests in Nagpur on 2026-12-12 with 90000 budget"]).notes)
+    assert not any("no vendor records" in n for n in turn(logs, ["Birthday for 40 guests in Pune on 2026-12-12 with 90000 budget"]).notes)
+
+
+def test_the_models_city_is_kept_only_when_the_user_wrote_it(logs):
+    kept = turn(logs, ["Birthday for 40 guests in Pune on 2026-12-12 with 90000 budget"], FakeLLM({"city": "Pune"}))
+    assert kept.draft.city == "Pune"
+    dropped = turn(logs, ["Birthday for 40 guests on 2026-12-12 with 90000 budget"], FakeLLM({"city": "Atlantis"}))
+    assert dropped.draft.city is None and "city" in dropped.missing
