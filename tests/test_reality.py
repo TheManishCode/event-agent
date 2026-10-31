@@ -111,3 +111,52 @@ def test_no_split_minimum_when_a_service_has_no_share(repo):
     zero = r.model_copy(update={"cap_weights": ()})
     pol = BudgetPolicy(weights_bp={"venue": 5000, "caterer": 5000, "photographer": 0})
     assert minimum_budget_default_split(zero, pol, {c: 1000 for c in r.services}) is None
+
+
+# ---- audit: verdict thresholds are exact, percentages are computed, and the minimums are the true minimum
+
+@pytest.mark.parametrize("budget,verdict", [
+    (138_999, "unrealistic"), (139_000, "contingency_breach"),  # floor 139,000 against the budget itself
+    (154_443, "contingency_breach"), (154_444, "tight"),  # floor against the budget left after the 10 percent reserve (pool 139,000 at 154,444)
+])
+def test_the_verdict_changes_exactly_at_the_floor_and_at_the_reserve(repo, budget, verdict):
+    assert check(budget, repo).verdict == verdict
+
+
+def test_the_comfortable_threshold_is_strict(repo):
+    assert check(154_444, repo, BudgetPolicy(comfortable_bp=8_500)).verdict == "tight"
+    assert check(154_444, repo, BudgetPolicy(comfortable_bp=10_000)).verdict == "comfortable"  # floor equals the pool: not above it
+    assert check(154_443, repo, BudgetPolicy(comfortable_bp=10_000)).verdict == "contingency_breach"
+
+
+def test_percentages_in_the_message_are_computed_from_the_floor_and_the_pool(repo):
+    assert "uses 77% of the budget after contingency" in check(200_000, repo).message  # 139,000 of 180,000
+    assert "uses 99% of the budget after contingency" in check(155_000, repo).message  # 139,000 of 139,500
+
+
+def test_the_reserve_advice_is_given_for_tight_budgets_and_not_for_comfortable_ones(repo):
+    assert "keeps the contingency reserve intact" in check(155_000, repo).message and "keeps the contingency reserve intact" in check(60_000, repo).message
+    assert "keeps the contingency reserve intact" not in check(200_000, repo).message
+
+
+@pytest.mark.parametrize("bp", [0, 1, 333, 1000, 2500, 5000, 9999])
+def test_the_minimum_with_a_reserve_is_exactly_the_least_budget_that_covers_the_floor(bp):
+    from eventmate.pricing.reality import _minimum_budget
+
+    for floor in (1, 7, 999, 139_000, 1_000_003):
+        m = _minimum_budget(floor, bp)
+        assert m - m * bp // 10_000 >= floor and (m == 1 or (m - 1) - (m - 1) * bp // 10_000 < floor)
+
+
+def test_the_default_split_minimum_is_the_least_budget_where_every_share_covers_its_vendor(repo):
+    from eventmate.pricing.reality import minimum_budget_default_split
+
+    r = parse_request(EXAMPLE, today=TODAY, known_cities=repo.cities())
+    costs = {c: p.cost for c, p in ((x.category, x) for x in check(200_000, repo).per_category)}
+    m = minimum_budget_default_split(r, BudgetPolicy(), costs)
+    from eventmate.agents.budget import compute_allocation
+
+    def holds(b):
+        return all(line.amount >= costs[line.category] for line in compute_allocation(r.model_copy(update={"budget_total": b}), BudgetPolicy()).lines)
+
+    assert holds(m) and not any(holds(b) for b in range(max(1, m - 200), m))
