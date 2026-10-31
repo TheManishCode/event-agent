@@ -57,11 +57,19 @@ from eventmate.integrations.websearch import SearchError
 from eventmate.integrations.travel import CABINS, TravelError, check_date
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-STATIC_FILES = {"app.js": "text/javascript; charset=utf-8", "style.css": "text/css; charset=utf-8", "favicon.svg": "image/svg+xml"}
+STATIC_FILES = {
+    "app.js": "text/javascript; charset=utf-8", "style.css": "text/css; charset=utf-8", "favicon.svg": "image/svg+xml",
+    "avatar.glb": "model/gltf-binary", "model-viewer.min.js": "text/javascript; charset=utf-8",  # the assistant avatar and its viewer (docs/ATTRIBUTIONS.md)
+}
+# The avatar viewer injects one fixed <style> block, reads the model's textures from blob: URLs that its own script creates, and compiles a small WebAssembly decoder.
+# Each is allowed as narrowly as possible: one exact hash instead of unsafe-inline, blob: (which only same-origin script can mint) instead of any external source,
+# and wasm-unsafe-eval, which permits WebAssembly compilation only and never string eval.
+VIEWER_STYLE_HASH = "sha256-PXtZZkJMMyc18o/DN1ZEFOJ2qEGq95IQbVaJFMOXOb0="
+LONG_CACHE = frozenset({"avatar.glb", "model-viewer.min.js"})  # large and unchanging: not re-sent on every page load
 LOOPBACK = {"127.0.0.1", "localhost", "[::1]", "::1"}
 CSP = (
-    "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
-    "connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    f"default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' '{VIEWER_STYLE_HASH}'; img-src 'self' data: blob:; "
+    "connect-src 'self' blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 )
 HEAVY_MAX = 4  # concurrent network-bound searches
 _PLAN_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
@@ -537,7 +545,7 @@ def create_app(
     def static_file(name: str):
         if name not in STATIC_FILES:
             abort(404)
-        return Response((STATIC_DIR / name).read_bytes(), mimetype=STATIC_FILES[name].split(";")[0], headers={"Cache-Control": "no-cache"})
+        return Response((STATIC_DIR / name).read_bytes(), mimetype=STATIC_FILES[name].split(";")[0], headers={"Cache-Control": "public, max-age=3600" if name in LONG_CACHE else "no-cache"})
 
     @app.get("/api/session")
     def session():

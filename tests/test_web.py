@@ -284,3 +284,42 @@ def test_tradeoffs_need_csrf_and_valid_body(client):
     assert client.post("/api/tradeoffs", data=json.dumps({"request": tight()}), headers={"Content-Type": "application/json"}).status_code == 403
     assert post(client, "/api/tradeoffs", {"request": ""}).status_code == 422
     assert post(client, "/api/tradeoffs", {"request": tight(), "x": 1}).status_code == 422
+
+
+# ---- the assistant avatar (a CC-BY model shown with <model-viewer>): served, bounded, credited, and the CSP stays strict
+
+def test_avatar_assets_are_served_with_the_right_types_and_nothing_else_is(client):
+    glb = client.get("/static/avatar.glb")
+    assert glb.status_code == 200 and glb.content_type.startswith("model/gltf-binary") and glb.data[:4] == b"glTF" and len(glb.data) < 2_000_000
+    js = client.get("/static/model-viewer.min.js")
+    assert js.status_code == 200 and "javascript" in js.content_type and b"SPDX-License-Identifier" in js.data[:400]
+    assert client.get("/static/model-viewer.min.js.map").status_code == 404 and client.get("/static/avatar.png").status_code == 404
+
+
+def test_the_csp_allows_only_what_the_avatar_viewer_needs_and_nothing_more(client):
+    csp = client.get("/").headers["Content-Security-Policy"]
+    assert "img-src 'self' data: blob:" in csp and "connect-src 'self' blob:" in csp and "default-src 'none'" in csp and "script-src 'self' 'wasm-unsafe-eval';" in csp
+    assert "style-src 'self' 'sha256-PXtZZkJMMyc18o/DN1ZEFOJ2qEGq95IQbVaJFMOXOb0=';" in csp  # one exact hash, never unsafe-inline
+    for never in ("'unsafe-inline'", "'unsafe-eval'", "worker-src", "http:", "https:", "*", "child-src", "frame-src", "object-src"):
+        assert never not in csp.replace("frame-ancestors 'none'", ""), never
+    assert "frame-ancestors 'none'" in csp and "base-uri 'none'" in csp and "form-action 'none'" in csp
+
+
+def test_the_avatar_is_credited_in_the_page_and_the_files_match_the_credit():
+    import hashlib
+    import json
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    page = (root / "eventmate/web/static/index.html").read_text()
+    notes = (root / "docs/ATTRIBUTIONS.md").read_text()
+    assert "Polytoria Avatar V3" in page and "dantheman" in page and "CC BY 4.0" in page and 'rel="noopener noreferrer"' in page
+    for name in ("avatar.glb", "model-viewer.min.js"):
+        digest = hashlib.sha256((root / "eventmate/web/static" / name).read_bytes()).hexdigest()
+        assert digest in notes, f"docs/ATTRIBUTIONS.md must record the SHA-256 of {name} (substituting a file must be visible)"
+    assert "creativecommons.org/licenses/by/4.0" in notes and "Apache-2.0" in notes and "sketchfab.com/3d-models/polytoria-avatar-v3-pauly" in notes
+    glb = (root / "eventmate/web/static/avatar.glb").read_bytes()
+    clen = int.from_bytes(glb[12:16], "little")
+    meta = json.loads(glb[20:20 + clen])
+    assert "CC-BY-4.0" in meta["asset"]["extras"]["license"] and not re.search(r'"uri"\s*:\s*"(?!data:)', glb[20:20 + clen].decode("utf8", "ignore"))

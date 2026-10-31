@@ -17,6 +17,11 @@ from tests.test_conversations import FakeChannel  # noqa: E402
 from eventmate.web.app import create_app  # noqa: E402
 
 
+def expected_noise(text):
+    """Browser messages that are not app errors: a deliberate 4xx the test provokes, and the software-rendering performance notes of a headless browser with no GPU (a driver stall, or the viewer's own frame-budget warning, which appears when the machine is busy)."""
+    return "status of 4" in text or "GL Driver Message" in text or "GPU stall" in text or "swiftshader" in text.lower() or "rAF timed out" in text
+
+
 @pytest.fixture
 def server(tmp_path):
     em = EventMate(log_dir=tmp_path / "logs", plan_dir=tmp_path / "plans", run_id="ui")
@@ -32,7 +37,7 @@ def test_full_user_journey_without_console_errors(server):
     with pw.sync_playwright() as p:
         browser = p.chromium.launch(executable_path=CHROMIUM, args=["--no-sandbox"])
         page = browser.new_page(viewport={"width": 1300, "height": 900})
-        page.on("console", lambda m: problems.append(m.text) if m.type in ("error", "warning") and "status of 4" not in m.text else None)
+        page.on("console", lambda m: problems.append(m.text) if m.type in ("error", "warning") and not expected_noise(m.text) else None)
         page.on("pageerror", lambda e: problems.append(str(e)))
         page.goto(server)
 
@@ -183,7 +188,7 @@ def test_failed_plan_offers_verified_tradeoffs_and_applying_one_builds_a_plan(se
     with pw.sync_playwright() as p:
         browser = p.chromium.launch(executable_path=CHROMIUM, args=["--no-sandbox"])
         page = browser.new_page(viewport={"width": 1300, "height": 900})
-        page.on("console", lambda m: problems.append(m.text) if m.type in ("error", "warning") and "status of 4" not in m.text else None)
+        page.on("console", lambda m: problems.append(m.text) if m.type in ("error", "warning") and not expected_noise(m.text) else None)
         page.on("pageerror", lambda e: problems.append(str(e)))
         page.goto(server)
         page.click(".classic summary")
@@ -205,7 +210,7 @@ def test_chat_intake_review_card_and_confirmation(server):
     with pw.sync_playwright() as p:
         browser = p.chromium.launch(executable_path=CHROMIUM, args=["--no-sandbox"])
         page = browser.new_page(viewport={"width": 1300, "height": 900})
-        page.on("console", lambda m: problems.append(m.text) if m.type in ("error", "warning") and "status of 4" not in m.text else None)
+        page.on("console", lambda m: problems.append(m.text) if m.type in ("error", "warning") and not expected_noise(m.text) else None)
         page.on("pageerror", lambda e: problems.append(str(e)))
         page.goto(server)
 
@@ -255,7 +260,7 @@ def test_ask_tab_answers_with_sources_and_changes_need_a_click(tmp_path):
         with pw.sync_playwright() as p:
             browser = p.chromium.launch(executable_path=CHROMIUM, args=["--no-sandbox"])
             page = browser.new_page(viewport={"width": 1300, "height": 900})
-            page.on("console", lambda m: problems.append(m.text) if m.type in ("error", "warning") and "status of 4" not in m.text else None)
+            page.on("console", lambda m: problems.append(m.text) if m.type in ("error", "warning") and not expected_noise(m.text) else None)
             page.on("pageerror", lambda e: problems.append(str(e)))
             page.goto(f"http://127.0.0.1:{srv.server_port}")
             page.wait_for_selector("#hero h1", timeout=30000)
@@ -367,7 +372,7 @@ def test_explore_view_runs_every_tool_from_forms_and_free_text_without_spending_
     finally:
         srv.shutdown()
     assert dialogs == []
-    assert [x for x in problems if "status of 4" not in x] == []
+    assert [x for x in problems if not expected_noise(x)] == []
 
 
 def test_saving_a_deal_as_a_lead_shows_it_in_the_budget_tab_without_changing_prices(tmp_path):
@@ -400,7 +405,7 @@ def test_saving_a_deal_as_a_lead_shows_it_in_the_budget_tab_without_changing_pri
             browser.close()
     finally:
         srv.shutdown()
-    assert [x for x in problems if "status of 4" not in x] == []
+    assert [x for x in problems if not expected_noise(x)] == []
     assert em.store.latest(pid).total_cost == before and len(em.leads(pid)) == 1
 
 
@@ -433,7 +438,7 @@ def test_manual_path_when_no_channel_is_set_up_link_then_i_sent_it(tmp_path):
             browser.close()
     finally:
         srv.shutdown()
-    assert [x for x in problems if "status of 4" not in x] == []
+    assert [x for x in problems if not expected_noise(x)] == []
     assert em.store.latest(pid).total_cost == before and [d.status for d in em.outreach(pid)] == ["marked_sent"]
 
 
@@ -487,7 +492,7 @@ def test_agent_conversation_in_the_browser_approve_send_reply_and_record_as_quot
             browser.close()
     finally:
         srv.shutdown()
-    assert [x for x in problems if "status of 4" not in x] == []
+    assert [x for x in problems if not expected_noise(x)] == []
     assert em.store.latest(pid).total_cost == before
 
 
@@ -522,7 +527,7 @@ def test_vendor_scores_card_shows_the_formula_for_recorded_quotes(tmp_path):
             browser.close()
     finally:
         srv.shutdown()
-    assert [x for x in problems if "status of 4" not in x] == []
+    assert [x for x in problems if not expected_noise(x)] == []
     assert em.store.latest(pid).total_cost == before
 
 
@@ -575,7 +580,7 @@ def test_standing_permission_answers_a_reply_by_itself_and_the_kill_switch_stops
             browser.close()
     finally:
         srv.shutdown()
-    assert [x for x in problems if "status of 4" not in x] == []
+    assert [x for x in problems if not expected_noise(x)] == []
 
 
 def test_quote_job_in_the_browser_start_approve_reply_confirm_with_validity(tmp_path):
@@ -632,7 +637,7 @@ def test_quote_job_in_the_browser_start_approve_reply_confirm_with_validity(tmp_
             browser.close()
     finally:
         srv.shutdown()
-    assert [x for x in problems if "status of 4" not in x] == []
+    assert [x for x in problems if not expected_noise(x)] == []
 
 
 def test_ideas_tab_suggests_labels_pins_and_dismisses_without_touching_the_plan(tmp_path):
@@ -668,7 +673,7 @@ def test_ideas_tab_suggests_labels_pins_and_dismisses_without_touching_the_plan(
             browser.close()
     finally:
         srv.shutdown()
-    assert [x for x in problems if "status of 4" not in x] == []
+    assert [x for x in problems if not expected_noise(x)] == []
     assert (em.store.latest(pid), len(em.store.versions(pid))) == before and em.ideas.notes(pid)[0].done
 
 
@@ -727,7 +732,7 @@ def test_community_tab_shows_checks_refuses_with_repairs_and_lets_only_the_user_
             browser.close()
     finally:
         srv.shutdown()
-    assert [x for x in problems if "status of 4" not in x] == []
+    assert [x for x in problems if not expected_noise(x)] == []
 
 
 def test_updates_inbox_and_the_two_step_email_copy_in_the_browser(tmp_path):
@@ -780,7 +785,7 @@ def test_updates_inbox_and_the_two_step_email_copy_in_the_browser(tmp_path):
             browser.close()
     finally:
         srv.shutdown()
-    assert [x for x in problems if "status of 4" not in x] == []
+    assert [x for x in problems if not expected_noise(x)] == []
 
 
 def test_a_required_access_need_keeps_the_plan_provisional_everywhere_until_the_venue_answers(tmp_path):
@@ -817,7 +822,7 @@ def test_a_required_access_need_keeps_the_plan_provisional_everywhere_until_the_
             browser.close()
     finally:
         srv.shutdown()
-    assert [x for x in problems if "status of 4" not in x] == []
+    assert [x for x in problems if not expected_noise(x)] == []
 
 
 def test_find_vendors_review_confirm_job_stop_request_and_test_vendor_in_the_browser(tmp_path):
@@ -923,7 +928,7 @@ def test_find_vendors_review_confirm_job_stop_request_and_test_vendor_in_the_bro
             browser.close()
     finally:
         srv.shutdown()
-    assert [x for x in problems if "status of 4" not in x] == []
+    assert [x for x in problems if not expected_noise(x)] == []
     assert em.store.latest(pid) == before  # none of this changed the plan
 
 
@@ -983,4 +988,53 @@ def test_a_bounced_address_shows_why_and_cannot_be_lifted_or_reconfirmed_until_t
             browser.close()
     finally:
         srv.shutdown()
-    assert [x for x in problems if "status of 4" not in x] == []
+    assert [x for x in problems if not expected_noise(x)] == []
+
+
+def until(page, expression, seconds=60):
+    """Poll with evaluate: the page's CSP forbids the string evaluation that wait_for_function uses."""
+    import time
+
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        if page.evaluate(expression):
+            return
+        page.wait_for_timeout(200)
+    raise AssertionError(f"timed out waiting for: {expression}")
+
+
+def test_the_avatar_loads_reacts_and_never_breaks_the_page(server):
+    problems = []
+    with pw.sync_playwright() as p:
+        browser = p.chromium.launch(executable_path=CHROMIUM, args=["--no-sandbox", "--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"])
+        page = browser.new_page(viewport={"width": 1300, "height": 900})
+        page.on("console", lambda m: problems.append(m.text) if m.type in ("error", "warning") and not expected_noise(m.text) else None)
+        page.on("pageerror", lambda e: problems.append(str(e)))
+        page.goto(server)
+        page.wait_for_selector("#chat-card model-viewer", state="attached", timeout=30000)
+        until(page, "document.querySelector('#chat-card model-viewer').loaded === true")
+        names = page.evaluate("document.querySelector('#chat-card model-viewer').availableAnimations")
+        assert {"Idle", "Wave", "Point", "Dance"} <= set(names)
+        # a reaction changes the animation and returns to idle; the page keeps working
+        page.fill("#chat-input", "Birthday for 40 guests in Pune")
+        page.click("#chat-send")
+        page.wait_for_selector("#chat-log .bubble.ai", timeout=30000)
+        until(page, "document.querySelector('#chat-card model-viewer').animationName === 'Idle'", 30)
+        assert "Polytoria Avatar V3" in page.inner_text("footer, .credits") and page.locator("a[href*='sketchfab.com/3d-models/polytoria-avatar-v3-pauly']").count() == 1
+        assert page.locator("#chat-card .mascot").bounding_box()["width"] <= 140  # it never grows to take over the card
+        browser.close()
+    assert problems == []
+
+
+def test_the_page_works_when_the_avatar_cannot_load(server):
+    with pw.sync_playwright() as p:
+        browser = p.chromium.launch(executable_path=CHROMIUM, args=["--no-sandbox"])
+        page = browser.new_page()
+        page.route("**/static/model-viewer.min.js", lambda route: route.abort())
+        page.route("**/static/avatar.glb", lambda route: route.abort())
+        page.goto(server)
+        page.fill("#chat-input", "Birthday for 40 guests in Pune")
+        page.click("#chat-send")
+        page.wait_for_selector("#chat-log .bubble.ai", timeout=30000)
+        assert page.locator("#chat-card .mascot").count() == 1 and page.locator("#chat-card model-viewer").count() == 0
+        browser.close()

@@ -98,7 +98,7 @@
       const body = { request: text }; const gl = $("#guest-list").value; if (gl) body.guest_list_id = gl;
       const r = await api("/api/plans", { method: "POST", body });
       if (r.status === 201) {
-        state.tasks = r.data.tasks; await refreshList(); await selectPlan(r.data.plan.plan_id, null, "overview"); toast("Plan validated and saved as version 1.");
+        state.tasks = r.data.tasks; await refreshList(); await selectPlan(r.data.plan.plan_id, null, "overview"); toast("Plan validated and saved as version 1."); mascotDo("Dance", true);
         showReality(errs, r.data.reality);
       } else if (r.status === 422 && r.data && r.data.problems) showViolations(errs, "I could not parse that request:", [], r.data.problems);
       else if (r.status === 422 && r.data && r.data.violations) { showViolations(errs, "No plan can satisfy every hard constraint:", r.data.violations, []); showReality(errs, r.data.reality); offerTradeoffs(errs, body); }
@@ -239,6 +239,30 @@
     builders[state.tab](panel);
   }
 
+  // ------------------------------------------------------------- avatar
+  // A friendly face for the assistant. It is decoration: the viewer loads lazily, and if it cannot load the page works exactly the same.
+  // Animations come from the model file itself (Idle, Wave, Point, Dance); reduced-motion users get a still pose.
+  const mascot = { mv: null, timer: 0, still: matchMedia("(prefers-reduced-motion: reduce)").matches };
+  async function initMascot() {
+    const host = $("#mascot"); if (!host) return;
+    try { await import("/static/model-viewer.min.js"); } catch (e) { return; }
+    if (!customElements.get("model-viewer")) return;
+    const mv = el("model-viewer", { src: "/static/avatar.glb", alt: "", loading: "eager", reveal: "auto", "interaction-prompt": "none", "disable-zoom": true, "disable-pan": true, "shadow-intensity": "0", exposure: "1.1",
+      "animation-name": "Idle", "animation-crossfade-duration": "250", "camera-orbit": "-8deg 84deg auto", "field-of-view": "26deg" });
+    mv.addEventListener("load", () => {
+      const d = mv.getDimensions(), c = mv.getBoundingBoxCenter();  // frame the head and shoulders
+      mv.cameraTarget = `${c.x}m ${c.y + d.y * 0.3}m ${c.z}m`; mv.cameraOrbit = `-8deg 84deg ${d.y * 1.25}m`; mv.jumpCameraToGoal();
+      mascot.mv = mv; mascotDo(mascot.still ? "Idle" : "Wave", !mascot.still);
+      if (mascot.still) mv.pause();
+    }, { once: true });
+    mv.addEventListener("finished", () => mascotDo("Idle"));
+    host.append(mv);
+  }
+  function mascotDo(name, once = false) {
+    const mv = mascot.mv; if (!mv || mascot.still) return;
+    mv.animationName = name; mv.play({ repetitions: once ? 1 : Infinity });
+  }
+
   // ------------------------------------------------------------- assistant
   // Answers come with their sources, a "how I answered" trace, and any change as a proposal that only a click here can apply.
   const ROUTE_LABEL = { direct: "answered from your plan, no AI needed", small: "small AI model", large: "large AI model", annotation: "approved answer, no AI needed", moderated: "blocked by policy" };
@@ -251,9 +275,9 @@
     const send = el("button", { class: "btn primary", type: "submit", text: "Ask" });
     const form = el("form", { class: "chat-form", autocomplete: "off", on: { submit: async (ev) => {
       ev.preventDefault(); const q = input.value.trim(); if (!q) return; input.value = ""; send.disabled = true;
-      log.push({ me: q }); drawAsk(thread, log);
+      log.push({ me: q }); drawAsk(thread, log); mascotDo("Point");
       const r = await api("/api/assistant/ask", { method: "POST", body: { plan_id: state.planId, question: q } });
-      send.disabled = false;
+      send.disabled = false; mascotDo("Idle");
       log.push(r.ok ? { ai: r.data } : { err: (r.data && r.data.error) || "I could not answer that." });
       drawAsk(thread, log); loadPending(pending);
     } } }, el("label", { class: "sr", for: "ask-input", text: "Ask the assistant" }), input, send);
@@ -1362,9 +1386,9 @@
   async function sendChat(text) {
     if (chat.busy || !text.trim()) return;
     chat.busy = true; $("#chat-send").disabled = true; $("#plan-errors").hidden = true;
-    say("me", text); chat.messages.push(text);
+    say("me", text); chat.messages.push(text); mascotDo("Point");
     const r = await api("/api/intake", { method: "POST", body: { messages: chat.messages.slice(-20), draft: chat.draft } });
-    chat.busy = false; $("#chat-send").disabled = false;
+    chat.busy = false; $("#chat-send").disabled = false; mascotDo("Idle");
     if (!r.ok) { say("note", (r.data && (r.data.error || (r.data.problems || []).join("; "))) || "I could not read that. Try again."); return; }
     chat.draft = r.data.draft; chat.flags = new Set(r.data.flags); chat.source = r.data.source;
     for (const n of r.data.notes) say("note", n);
@@ -1457,6 +1481,7 @@
   }
 
   function initChat() {
+    initMascot();
     const box = $("#chat-examples");
     for (const [label, text] of CHAT_EXAMPLES) box.append(el("button", { class: "chip", type: "button", text: label, on: { click: () => { $("#chat-input").value = text; $("#chat-input").focus(); } } }));
     $("#chat-form").addEventListener("submit", (ev) => { ev.preventDefault(); const i = $("#chat-input"); const t = i.value; i.value = ""; sendChat(t); });
