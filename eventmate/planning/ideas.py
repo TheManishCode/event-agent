@@ -59,14 +59,14 @@ _CULTURAL = re.compile(
 _CULTURAL_SOFT = re.compile(r"\btradition(?:al|ally|s)?\b", re.I)
 # Hazards are never advice. Each is blocked with a reason; none is softened.
 _HAZARDS = (
-    ("payment", re.compile(r"\b(?:pay|paying|transfer|send|wire|remit|deposit)\b[^.\n]{0,40}\b(?:advance|deposit|amount|money|fee|balance|payment|booking)\b|\b(?:upi|neft|imps|rtgs|ifsc|gpay|google pay|phonepe|paytm|bank (?:account|transfer))\b|\badvance payment\b", re.I),
+    ("payment", re.compile(r"\b(?:pay|paying|transfer|send|wire|remit|deposit)\b[^.\n]{0,40}\b(?:advance|deposit|amount|money|fee|balance|payment|booking)\b|\b(?:upi|neft|imps|rtgs|ifsc|gpay|google pay|phonepe|paytm|bank (?:account|transfer))\b|\badvance payment\b|\bpre-?paid\b|\bprepay\w*|\bpay\b[^.\n]{0,30}\b(?:on arrival|on delivery|upfront|in cash|by cash|cash)\b|\bcash (?:payment|on delivery)\b", re.I),
      "payment or transfer instructions need a person, not an idea"),
     ("safety", re.compile(r"\b(?:guarantee[ds]?|100%|completely|totally|fully)\s+(?:safe|allergen[- ]free|nut[- ]free|peanut[- ]free|gluten[- ]free)\b|\bguarantee\w*\b|\b(?:safe for (?:all )?allerg\w+|allergy[- ]safe|risk[- ]free|allergen[- ]free)\b", re.I),
      "a safety or allergen guarantee cannot be made here; ask the caterer and record their answer"),
-    ("fire", re.compile(r"\b(?:fire (?:dance|show|performance|breath\w*|eating|juggl\w*)|open flames?|real flames?|fireworks?|firecrackers?|pyrotechnic\w*|bonfire|sparklers?)\b", re.I),
+    ("fire", re.compile(r"\b(?:fire (?:dance|show|performance|breath\w*|eating|juggl\w*)|open flames?|real flames?|fireworks?|fire\s?crackers?|crackers? bursting|pyrotechnic\w*|bonfire|sparklers?|guns?|gun salute|firearms?|rifles?|cannons?|confetti cannons?|smoke machines?)\b", re.I),
      "open flames and fireworks need a safety decision by a person"),
-    ("alcohol", re.compile(r"\b(?:alcohol\w*|liquor|beer|wine|whisk(?:e)?y|vodka|cocktails?|bartend\w*|open bar)\b", re.I),
-     "alcohol depends on who attends and the rules that apply; a person decides"),
+    ("alcohol", re.compile(r"\b(?<!non-)(?<!non )(?<!no )(?<!zero )(?:alcohol(?!-free|\s+free)\w*|liquor|beer|wine(?![- ](?:colou?r|red|coloured|toned|hued))|whisk(?:e)?y|vodka|cocktails?|bartend\w*|open bar|bhang|hookah|shisha|cannabis|marijuana|vape|vaping|tobacco|cigars?)\b", re.I),
+     "alcohol and intoxicants depend on who attends and the rules that apply; a person decides"),
     ("phone", re.compile(r"(?<![\w.])(?:\+?\d[\s().-]?){9,}\d(?![\w])"), "a phone number is not an idea; contacts come from the vendor's own page"),
     ("domain", re.compile(r"\b[a-z0-9-]{2,}(?:\.[a-z0-9-]{2,})*\.(?:com|in|org|net|io|app|xyz|info|biz|shop|online|site|store|dev|ai)\b", re.I), "a web address is not an idea"),
 )
