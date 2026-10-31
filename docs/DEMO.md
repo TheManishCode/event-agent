@@ -30,8 +30,9 @@ Then **Draft quote requests**, approve the exact text, and continue as below. If
 Vendor chats -> save contacts for three caterers, start a job ("2 caterer quotes"), approve the drafted requests (the exact text is shown; no budget in it). A reply arrives (`MailWorld.reply(...)` in the fake world, or reply from your second address): "Total INR 78,000 for the event. Valid for 10 days."
 Show the Updates box and the proposed price with "check taxes and extras". It is not a quote yet.
 
-## 5. Confirm and re-price (1 min)
-Enter validity (10 days is pre-filled because the vendor wrote it) and confirm: now it is a recorded quote. Show the plan is still unchanged. Budget tab -> "Re-price this plan": version 3 with the lower caterer cost and a diff. No plan change happened automatically.
+## 5. Confirm and re-price (1.5 min), and the limit to say out loud
+**Case 1, a vendor in the plan (a seed vendor).** Enter validity (10 days is pre-filled when the vendor wrote it) and confirm: now it is a recorded quote. The plan is still unchanged. Budget tab -> "Re-price this plan": a new version with the changed caterer cost and a diff. Nothing changed automatically; you pressed the button.
+**Case 2, a discovered or test business. Say this plainly:** *a quote from a business that discovery found, or from a test vendor, is recorded and scored, but it does not update the plan.* It is not one of the plan's vendors, so "Re-price this plan" shows no change for it, by design. Show it: confirm a quote from the discovered or test business, open the Vendor scores card (it appears there with its name and origin), then press Re-price and point at the unchanged total. Making a discovered business a plan vendor would need an explicit promotion step that does not exist yet.
 Optional: turn on the owner email copy; show the exact summary before confirming.
 
 ## Paired regression run (30 s)

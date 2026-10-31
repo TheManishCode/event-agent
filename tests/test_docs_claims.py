@@ -26,3 +26,9 @@ def test_the_readme_does_not_call_stop_or_bounce_matching_authenticated():
 def test_the_ui_says_so_next_to_the_list():
     js = read("eventmate", "web", "static", "app.js")
     assert "Neither is authenticated: mail headers can be forged" in js and "remote mail server's own words, not verified" in js
+
+
+def test_the_demo_states_that_a_discovered_quote_does_not_update_the_plan():
+    demo = read("docs", "DEMO.md")
+    assert "does not update the plan" in demo and "Re-price this plan" in demo and "not one of the plan's vendors" in demo and "promotion step that does not exist yet" in demo
+    assert "TEST VENDOR" in demo and "synthetic" in demo  # which vendors are which is also stated
