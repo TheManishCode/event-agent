@@ -23,6 +23,7 @@ from eventmate.netutil import loads
 from eventmate.llm import LLMClient, PromptError, PromptStore
 from eventmate.planning.community import load_profiles, match_subtype
 from eventmate.logs import RunLogs
+from eventmate.privacy import Placeholders
 from eventmate.schemas import (
     MAX_BUDGET_INR,
     MAX_GUESTS,
@@ -231,7 +232,7 @@ def _llm_draft(llm: LLMClient, prompts: PromptStore, logs: RunLogs, message: str
     user = (
         body.replace("{today}", today.isoformat())
         .replace("{draft}", prior.model_dump_json(exclude_none=True))
-        .replace("{message}", _FENCE.sub("", message))
+        .replace("{message}", _FENCE.sub("", Placeholders().mask(message)))  # contact details never reach the model
         .replace("{community_subtypes}", ", ".join(load_profiles().profiles))
     )
     started = time.perf_counter()

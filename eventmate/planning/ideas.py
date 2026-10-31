@@ -24,6 +24,7 @@ from eventmate.jsonl import JsonlLog
 from eventmate.llm import LLMClient, PromptError, PromptStore
 from eventmate.logs import RunLogs
 from eventmate.netutil import loads
+from eventmate.privacy import Placeholders
 from eventmate.schemas import (
     IDEA_FIELDS, AgentName, ConstraintCheck, DecisionType, DroppedIdea, Idea, IdeaDecision, IdeaSet, IdeaView, PlanNote, PlanVersion, VendorCategory,
     mentions_price,
@@ -199,7 +200,7 @@ def clean_preferences(prefs: Sequence[str]) -> Tuple[str, ...]:
     for p in prefs:
         if not isinstance(p, str) or not 1 <= len(p.strip()) <= MAX_PREFERENCE_CHARS or any(ord(c) < 32 or ord(c) == 127 for c in p):
             raise ValueError(f"each preference must be 1-{MAX_PREFERENCE_CHARS} characters without control characters")
-        out.append(_FENCE.sub(" ", p).strip())  # the marker that closes the facts block can never come from a user
+        out.append(_FENCE.sub(" ", Placeholders().mask(p)).strip())  # the marker that closes the facts block can never come from a user; contact details become placeholders
     return tuple(out)
 
 

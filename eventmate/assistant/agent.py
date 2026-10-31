@@ -24,6 +24,7 @@ from eventmate.assistant.identity import Perm, Principal
 from eventmate.assistant.knowledge import KnowledgeBase, build_default
 from eventmate.assistant.langfuse import LangfuseExporter
 from eventmate.assistant.router import Route, route
+from eventmate.privacy import Placeholders
 from eventmate.assistant.session import SessionStore, depends_on_context
 from eventmate.assistant.tools import Tool, ToolContext, build_tools, execute, visible_tools
 from eventmate.assistant.trace import FeedbackLog, ProposalLog, TraceBuilder, TraceLog, sha, tokens
@@ -100,6 +101,8 @@ class Assistant:
         plan = self.em.store.latest(plan_id)  # unknown or hostile ids fail here
         roles = tuple(r.value for r in principal.roles)
         tb = TraceBuilder(plan_id, principal.user_id, roles, question)
+        ph = Placeholders()
+        model_question = ph.mask(question)  # what a model may see: contact details become placeholders
         flags = guard.scan(question)
         if flags:
             tb.step("guard", "injection_scan", ok=False, detail="question contains instruction-like text: " + ", ".join(flags))
@@ -119,7 +122,7 @@ class Assistant:
         key = cache_key(question + ("\n" + memory if depends_on_context(question) else ""), roles, plan_id, state_fp, self.kb.version, self.prompt_sha)  # an answer given with context is never reused without it
 
         def compute():
-            result, evidence_hostile = self._answer(question, plan_id, principal, r, tb, memory)
+            result, evidence_hostile = self._answer(model_question, plan_id, principal, r, tb, memory)
             return result, result.outcome == "answered" and not result.proposals and not flags and not evidence_hostile
 
         result, cache_state = self.cache.get_or_compute(key, compute)
@@ -127,7 +130,7 @@ class Assistant:
             tb.step("cache", cache_state, detail="answer reused; no model or tool ran for this question")
         final = self._record(tb, result.model_copy(update={"cache": cache_state}), principal, plan_id, roles, question)
         self.sessions.record(plan_id, principal.user_id, question, final.answer, final.outcome)
-        return final
+        return final.model_copy(update={"answer": ph.restore(final.answer)})  # real values back only in what this person sees; the trace and memory hold the masked text
 
     def _record(self, tb: TraceBuilder, result: AnswerResult, principal: Principal, plan_id: str, roles: Tuple[str, ...], question: Optional[str] = None) -> AnswerResult:
         question = tb.question if question is None else question
