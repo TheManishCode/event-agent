@@ -190,3 +190,18 @@ def test_cli_prints_the_draft_and_sends_nothing(em, pid, tmp_path, capsys):
     assert json.loads(capsys.readouterr().out)["link"].startswith("https://wa.me/919876543210?text=")
     code = main(["--plan-dir", str(tmp_path / "p"), "--log-dir", str(tmp_path / "l"), "outreach", pid, "caterer", "email", "bad address", "--name", "Asha"])
     assert code != 0
+
+
+@pytest.mark.parametrize("brief,phrase", [
+    ("Plan a 120-person engagement party in Pune on December 12 under INR 200,000. Venue and catering.", "an engagement party"),
+    ("Plan a 120-person wedding in Pune on December 12 under INR 500,000. Venue and catering.", "a wedding"),
+    ("Plan a 60-person birthday in Pune on December 12 under INR 150,000. Venue and catering.", "a birthday"),
+    ("Plan a 150-person college fest in Pune on December 12 under INR 250,000. Venue and catering.", "a community event"),
+    ("Plan a 50-person gathering in Pune on December 12 under INR 100,000. Venue and catering.", "an event"),
+])
+def test_the_request_reads_naturally_for_every_event_type(tmp_path, brief, phrase):
+    e = EventMate(log_dir=tmp_path / "l", plan_dir=tmp_path / "p", run_id="w", require_symbolic=False)
+    plan_id = e.plan(brief, today=TODAY).plan.plan_id
+    d = e.draft_outreach(plan_id, C.CATERER, "email", "sales@vendor.test", "Asha")
+    assert f"I am organising {phrase} in Pune" in d.body and f"for {phrase} on 2026-12-12" in d.subject
+    assert " a engagement" not in d.body + d.subject and " a other" not in d.body + d.subject and "a community in" not in d.body

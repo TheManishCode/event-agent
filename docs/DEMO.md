@@ -30,4 +30,4 @@ Enter validity (10 days is pre-filled because the vendor wrote it) and confirm: 
 Optional: turn on the owner email copy; show the exact summary before confirming.
 
 ## Paired regression run (30 s)
-Run a wedding: `Plan a 120-person wedding in Pune on December 12 under INR 500,000. Venue and catering.` There is no Community tab, no community checks, and the plan, Ideas and quotes flow work as before. `python -m pytest tests` (1507 passed on Python 3.14.8 with solvers and Chromium).
+Run a wedding: `Plan a 120-person wedding in Pune on December 12 under INR 500,000. Venue and catering.` There is no Community tab, no community checks, and the plan, Ideas and quotes flow work as before. `python -m pytest tests` (1512 passed on Python 3.14.8 with solvers and Chromium).

@@ -87,14 +87,23 @@ def clean_followup(text: str) -> str:
     return text
 
 
+_EVENT_NOUN = {"community": "community event", "other": "event"}
+
+
+def _event_phrase(event_type: str) -> str:
+    """"a wedding", "an engagement party", "a community event": the right article and a noun a person would say."""
+    noun = _EVENT_NOUN.get(event_type, event_type.replace("_", " "))
+    return ("an " if noun[0] in "aeiou" else "a ") + noun
+
+
 def _message(plan: PlanVersion, category: VendorCategory, vendor_name: str, sender: str, checklist: Tuple[str, ...]) -> Tuple[str, str]:
     r = plan.request
-    event = r.event_type.value.replace("_", " ")
-    subject = f"Quote request: {_SERVICE[category].replace('a venue', 'venue')} for a {event} on {r.event_date.isoformat()}"
+    event = _event_phrase(r.event_type.value)
+    subject = f"Quote request: {_SERVICE[category].replace('a venue', 'venue')} for {event} on {r.event_date.isoformat()}"
     lines = [
         f"Hello {vendor_name},",
         "",
-        f"I am organising a {event} in {r.city} on {r.event_date.isoformat()} for about {r.guest_count} guests and would like a quote for {_SERVICE[category]}.",
+        f"I am organising {event} in {r.city} on {r.event_date.isoformat()} for about {r.guest_count} guests and would like a quote for {_SERVICE[category]}.",
     ]
     if category == VendorCategory.CATERER and r.dietary:
         lines.append("Dietary needs: " + ", ".join(d.value.replace("_", " ") for d in r.dietary) + ".")
