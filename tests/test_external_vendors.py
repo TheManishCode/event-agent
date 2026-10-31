@@ -217,3 +217,45 @@ def test_the_vendor_score_ranks_external_businesses_by_their_own_reference_and_t
     d = em.vendor_directory()
     assert d["cat-pune-rasoi"]["origin"] == "seed" and d[ids[0]] == {"name": "Caterer 0", "origin": "discovered", "label": None}
     assert d[tv.vendor_id]["origin"] == "test" and d[tv.vendor_id]["label"] == "TEST VENDOR (address owned by Asha)"
+
+
+# ---- audit: the entry points that must refuse, each by name
+
+def test_a_contact_cannot_be_typed_in_for_a_discovered_business(em, pid):
+    biz = discovered(em)
+    with pytest.raises(ValueError, match="only by confirming an address found"):
+        em.set_vendor_contact(biz.vendor_id, "owner@rasoi-pune.example", None, "email")
+    assert em.outreach_store.contacts().get(biz.vendor_id) is None
+    with pytest.raises(ValueError, match="unknown vendor"):
+        em.set_vendor_contact("cat-nowhere", "a@b.test", None, "email")
+
+
+@pytest.mark.parametrize("source", ["", "web", "OSM", "google", "gplaces ", "osm; drop"])
+def test_a_discovered_business_comes_only_from_a_known_source(em, source):
+    with pytest.raises(ValueError, match="OpenStreetMap or Google Places"):
+        em.add_discovered("osm:node/1001", "Sharma Caterers", "Pune", C.CATERER, source)
+    assert em.add_discovered("osm:node/1001", "Sharma Caterers", "Pune", C.CATERER, "osm").source == "osm"
+
+
+def test_a_test_vendor_has_no_website_to_set_or_read_and_an_unknown_business_is_refused(em):
+    test, _contact = em.add_test_vendor("Test Caterer", "Pune", C.CATERER, "owner@example.test", True, "Manish")
+    for call in (lambda: em.set_business_website(test.vendor_id, "https://x.example/"), lambda: em.find_business_contacts(test.vendor_id)):
+        with pytest.raises(ValueError, match="test vendor"):
+            call()
+    with pytest.raises(ValueError, match="unknown discovered business"):
+        em.find_business_contacts("ext_nope")
+    with pytest.raises(ValueError, match="unknown discovered business"):
+        em.find_business_contacts("cat-pune-annapurna")  # a seed vendor is not a discovered business
+
+
+def test_an_address_can_be_decided_only_once(em):
+    biz = discovered(em)
+    em.shortlist.add_candidates(biz.vendor_id, [{"channel": "email", "value": "a@rasoi-pune.example", "source_url": SRC, "source_kind": "page_text", "flags": ()}])
+    cand = em.shortlist.candidates(biz.vendor_id)[0]
+    em.reject_contact(biz.vendor_id, cand.candidate_id)
+    with pytest.raises(ValueError, match="already rejected"):
+        em.reject_contact(biz.vendor_id, cand.candidate_id)
+    with pytest.raises(ValueError, match="already rejected"):
+        em.confirm_contact(biz.vendor_id, cand.candidate_id, "Asha")
+    with pytest.raises(ValueError, match="unknown business or contact candidate"):
+        em.reject_contact(biz.vendor_id, "nope")
