@@ -313,3 +313,72 @@ def test_cli_autoreply_on_off_status_and_kill(em, pid, tmp_path, capsys):
     assert main(base + ["inbox", "kill"]) == 0
     assert main(base + ["inbox", "autoreply", pid]) == 0 and "kill switch" in capsys.readouterr().out
     assert main(base + ["inbox", "autoreply", pid, "--name", "Asha"]) != 0  # refused while killed
+
+
+# ---- audit: the documented limits are pinned at their defaults and at their edges
+
+def test_the_default_send_caps_are_three_per_vendor_per_day_and_thirty_per_day(tmp_path, chans, clock):
+    assert (SendPolicy().per_vendor_per_day, SendPolicy().per_day) == (3, 30)
+    fresh = EventMate(log_dir=tmp_path / "l2", plan_dir=tmp_path / "p2", run_id="defaults", channels=chans)
+    fresh.outreach_store.now = fresh.conversations.now = clock
+    assert (fresh.conversations.policy.per_vendor_per_day, fresh.conversations.policy.per_day) == (3, 30)
+
+
+def test_a_real_default_policy_sends_three_messages_to_one_vendor_in_a_day_and_holds_the_fourth(tmp_path, chans, clock):
+    fresh = EventMate(log_dir=tmp_path / "l3", plan_dir=tmp_path / "p3", run_id="cap", channels=chans)
+    fresh.outreach_store.now = fresh.conversations.now = clock
+    pid = fresh.plan(EXAMPLE, today=TODAY).plan.plan_id
+    for _ in range(4):
+        d = fresh.draft_outreach(pid, C.CATERER, "email", "sales@annapurna.in", "Asha")
+        fresh.approve_outreach(pid, d.draft_id, d.content_hash)
+    assert [x.status for x in fresh.outreach(pid)] == ["sent", "sent", "sent", "approved"] and len(chans["email"].sent) == 3
+    clock.advance(hours=24, seconds=1)
+    fresh.conversations.dispatch()
+    assert fresh.outreach(pid)[-1].status == "sent"
+
+
+def test_the_default_permission_is_72_hours_three_per_thread_ten_total_and_nine_to_twenty_ist():
+    m = Mandate(plan_id="p1", sender_name="Asha", granted_at=T0, expires_at=T0 + timedelta(hours=1))
+    assert (m.max_per_thread, m.max_total, m.window_start, m.window_end) == (3, 10, 9, 20)
+
+
+@pytest.mark.parametrize("hours,ok", [(1, True), (168, True), (0, False), (169, False), (-1, False), (True, False), ("5", False), (2.5, False)])
+def test_the_permission_length_is_a_whole_number_of_hours_from_1_to_168(em, pid, hours, ok):
+    if ok:
+        assert grant(em, pid, hours=hours).expires_at == T0 + timedelta(hours=hours)
+    else:
+        with pytest.raises(ValueError, match="whole number from 1 to 168"):
+            grant(em, pid, hours=hours)
+
+
+@pytest.mark.parametrize("field,good,bad,other", [
+    ("max_per_thread", (1, 5), (0, 6), {}), ("max_total", (1, 30), (0, 31), {}),
+    ("window_start", (0, 23), (-1, 24), {"window_end": 24}), ("window_end", (1, 24), (0, 25), {"window_start": 0}),
+])
+def test_every_permission_limit_is_exact(field, good, bad, other):
+    base = dict(plan_id="p1", sender_name="Asha", granted_at=T0, expires_at=T0 + timedelta(hours=1), **other)
+    for v in good:
+        assert getattr(Mandate(**{**base, field: v}), field) == v
+    for v in bad:
+        with pytest.raises(ValidationError):
+            Mandate(**{**base, field: v})
+
+
+def test_a_stop_request_withholds_the_automatic_reply_even_if_the_do_not_contact_list_is_missing(em, pid, chans, clock):
+    em.conversations.suppressions = None  # the reply-level check must hold on its own
+    grant(em, pid)
+    d = sent_request(em, pid)
+    vendor_says(chans, clock, d, "Please stop writing to me. We are not interested.")
+    em.poll_conversations()
+    assert autos(em, pid) == [] and len(chans["email"].sent) == 1
+
+
+def test_the_permission_counts_what_it_queued_but_not_what_was_denied(em, pid, chans, clock):
+    grant(em, pid)
+    d = sent_request(em, pid)
+    vendor_says(chans, clock, d, "Hello, we can do it on that date.")
+    em.poll_conversations()
+    queued = autos(em, pid)
+    assert len(queued) == 1 and em.autoreply_status(pid).sent_total == 1
+    em.outreach_store.transition(pid, queued[0].draft_id, ("prepared", "approved", "sent"), status="denied")
+    assert em.autoreply_status(pid).sent_total == 0
