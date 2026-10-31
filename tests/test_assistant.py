@@ -717,3 +717,32 @@ def test_web_feedback_and_approved_answers(em, pid):
     assert post(guest, f"/api/assistant/annotations/{listed[0]['id']}/delete", {"plan_id": pid}).status_code == 403
     assert post(org, f"/api/assistant/annotations/{listed[0]['id']}/delete", {"plan_id": pid}).status_code == 200
     assert org.get(f"/api/assistant/annotations?plan_id={pid}").get_json() == []
+
+
+# ---- audit: deciding needs the general approval permission AND the permission of the action itself
+
+def test_approving_needs_both_the_approval_permission_and_the_actions_own_permission(em, pid, monkeypatch):
+    from eventmate.assistant import identity
+    from eventmate.assistant.identity import Perm, Principal, Role
+
+    a, _ = make(em, tool("propose_ledger_entry", kind="payment", category="venue", amount=1000), answer("filed", "propose_ledger_entry"))
+    p = a.ask("record a payment of 1000", pid, LOCAL_ORGANIZER).proposals[0]
+    helper = Principal(user_id="helper1", roles=(Role.HELPER,))
+    with monkeypatch.context() as m:  # no real role holds one without the other, so build the two mixed cases
+        m.setitem(identity.ROLE_PERMS, Role.HELPER, frozenset({Perm.APPROVE}))
+        with pytest.raises(ApprovalError, match="not allowed"):
+            a.decide(p.id, helper, True)
+        m.setitem(identity.ROLE_PERMS, Role.HELPER, frozenset({Perm.LEDGER_WRITE}))
+        with pytest.raises(ApprovalError, match="not allowed"):
+            a.decide(p.id, helper, True)
+        m.setitem(identity.ROLE_PERMS, Role.HELPER, frozenset({Perm.APPROVE, Perm.LEDGER_WRITE}))
+        assert a.decide(p.id, helper, True).status == "approved"
+    assert len(em.ledger_entries(pid)) == 1
+
+
+def test_deciding_on_a_proposal_that_does_not_exist_is_refused(em, pid):
+    a, _ = make(em, answer("unused"))
+    with pytest.raises(ApprovalError, match="unknown proposal"):
+        a.decide("nope", LOCAL_ORGANIZER, True)
+    with pytest.raises(ApprovalError, match="unknown proposal"):
+        a.queue.get("nope")
