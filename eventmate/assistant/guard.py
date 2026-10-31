@@ -1,8 +1,8 @@
 """Guardrails that wrap the model: injection scan, PII masking, data fencing and an output fact check.
 
 None of these is the main defence. The main defence is that the model has no authority (tools are permission
-checked, mutations are proposals). These make attacks visible, keep personal data out of logs and prompts, and
-stop an answer from stating facts that no tool or document supplied.
+checked, mutations are proposals). These make attacks visible, mask personal data in logs, tool results and (via placeholders, eventmate/privacy.py)
+in what is sent to a model, and stop an answer from stating facts that no tool or document supplied.
 """
 
 from __future__ import annotations

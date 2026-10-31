@@ -6,8 +6,11 @@ keeps every vendor name, and contains no markup or links. Anything else falls
 back to the deterministic text. Prompts are versioned Markdown under /prompts.
 
 Clients come from NVIDIA and/or OpenRouter (ADR-032): none is created unless a key is present in the
-environment (never in files) and EVENTMATE_ENABLE_LLM is not 0. The raw user request and guest names are never
-sent: only the already-verified plan summary.
+environment (never in files) and EVENTMATE_ENABLE_LLM is not 0.
+
+What each model stage is sent (see docs/MODEL_INPUTS.md): the explanation stage gets only the already-verified plan summary (no raw request,
+no guest names). Intake gets the user's message and the reviewed draft, with contact details replaced by placeholders. The assistant gets the question
+(placeholders for contact details), a short fenced conversation, and tool results. Ideas get eight fact fields. See each stage's masking there.
 """
 
 from __future__ import annotations
