@@ -114,7 +114,7 @@ def test_llm_value_the_parser_cannot_find_is_flagged_for_the_human(logs):
 def test_malformed_or_hostile_llm_output_degrades_to_the_parser(logs, reply):
     t = turn(logs, [SAY], FakeLLM(reply))
     assert t.source == "rule:parser" and t.draft.guest_count == 120  # parser still reads it
-    assert any("AI reader was unavailable" in n for n in t.notes)
+    assert any("did not return details in the expected shape" in n for n in t.notes)
 
 
 def test_provider_failure_degrades_to_the_parser(logs):
@@ -236,3 +236,68 @@ def test_approved_requests_carry_a_receipt_of_the_exact_draft(tmp_path):
     r2 = intake.to_request(d.model_copy(update={"guest_count": 121}), SAY, TODAY)
     receipt = lambda r: next(a for a in r.assumptions if "sha256:" in a)  # noqa: E731
     assert receipt(r1) != receipt(r2) and receipt(r1) == receipt(intake.to_request(d, SAY, TODAY))
+
+
+# ---- live-run failures: a model name with "/" or ":" and replies that are not clean JSON
+
+class _Reply:
+    name = "nvidia:nvidia/nemotron-3-ultra-550b-a55b"
+
+    def __init__(self, *replies):
+        self.replies, self.calls = list(replies), 0
+
+    def complete(self, system, user, max_tokens):
+        self.calls += 1
+        return self.replies.pop(0) if len(self.replies) > 1 else self.replies[0]
+
+
+REPLY_OK = '{"event_type": "birthday", "guest_count": 40, "city": "Pune", "event_date": "2026-12-12", "budget_inr": 90000, "services": ["venue"]}'
+
+
+def _turn(tmp_path, llm, msg="Birthday for 40 guests in Pune on December 12, 90k budget"):
+    from eventmate.logs import RunLogs
+
+    return intake.propose([msg], None, date(2026, 10, 31), ("Pune",), RunLogs.create(log_dir=tmp_path, run_id="t"), llm)
+
+
+def test_a_model_name_with_slash_and_colon_gives_a_source_the_confirm_endpoint_accepts(tmp_path):
+    import re
+
+    from eventmate.schemas import SOURCE_PATTERN
+
+    t = _turn(tmp_path, _Reply(REPLY_OK))
+    assert t.source.startswith("llm:") and re.fullmatch(r"[A-Za-z0-9:._-]+", t.source) and SOURCE_PATTERN.fullmatch(t.source) and len(t.source) <= 80
+
+
+def test_the_confirm_body_accepts_the_source_a_real_turn_produced(tmp_path):
+    from eventmate.web.app import IntakeConfirmBody
+
+    t = _turn(tmp_path, _Reply(REPLY_OK))
+    IntakeConfirmBody.model_validate({"draft": t.draft.model_dump(mode="json"), "source": t.source})
+
+
+@pytest.mark.parametrize("first", ["I think the answer is: Pune, 40 guests", "<think>The user wants a birthday plan. " + "x " * 200, "```json\n" + REPLY_OK + "\n```", "Sure! Here you go:\n" + REPLY_OK + "\nHope that helps {smile}", ""])
+def test_an_unusable_first_reply_is_retried_once_and_the_second_is_used(tmp_path, first):
+    llm = _Reply(first, REPLY_OK)
+    t = _turn(tmp_path, llm)
+    assert t.source.startswith("llm:") and t.draft.guest_count == 40 and llm.calls <= 2
+
+
+def test_two_unusable_replies_fall_back_with_a_note_that_says_why(tmp_path):
+    llm = _Reply("no json here")
+    t = _turn(tmp_path, llm)
+    assert llm.calls == 2 and t.source == "rule:parser" and t.draft.guest_count == 40
+    assert any("did not return details in the expected shape" in n for n in t.notes) and not any("unavailable" in n for n in t.notes)
+
+
+def test_a_provider_error_is_not_retried_and_says_unavailable(tmp_path):
+    class Down:
+        name = "down"
+        calls = 0
+
+        def complete(self, *a):
+            Down.calls += 1
+            raise RuntimeError("boom")
+
+    t = _turn(tmp_path, Down())
+    assert Down.calls == 1 and any("unavailable" in n for n in t.notes) and t.source == "rule:parser"
