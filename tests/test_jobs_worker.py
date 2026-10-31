@@ -573,3 +573,35 @@ def test_the_worker_loop_stops_when_its_stop_file_exists(em, tmp_path, monkeypat
     monkeypatch.setenv("EVENTMATE_WORKER_STOP", str(stop))
     assert worker.main(["--once", "--plan-dir", str(tmp_path / "p")]) == 0
     assert "stop file found" in capsys.readouterr().out
+
+
+# ---- audit finding: approving a finished job must send nothing
+
+@pytest.mark.parametrize("end", ["cancel", "expire"])
+def test_approving_the_requests_of_an_ended_job_approves_and_sends_nothing(em, w, pid, clock, chan, end):
+    job = start(w, pid, clock)
+    if end == "cancel":
+        w.cancel(job.job_id)
+    else:
+        clock.advance(days=8)  # past the 7-day deadline while the drafts still wait for the user
+    with pytest.raises(ValueError):
+        w.approve_requests(job.job_id)
+    w.tick()
+    assert chan.sent == [] and {d.status for d in em.outreach_store.list(pid)} <= {"prepared", "denied"}
+
+
+def test_cancelling_a_job_denies_requests_that_were_never_sent(em, w, pid, clock, chan):
+    job = start(w, pid, clock)
+    w.cancel(job.job_id)
+    assert {d.status for d in em.outreach_store.list(pid)} == {"denied"}
+    w.tick()
+    assert chan.sent == []
+
+
+def test_cancelling_after_approval_does_not_unsend_what_already_went_out(em, w, pid, clock, chan):
+    job = start(w, pid, clock)
+    w.approve_requests(job.job_id)
+    w.tick()
+    sent = len(chan.sent)
+    w.cancel(job.job_id)
+    assert sent == 3 and {d.status for d in em.outreach_store.list(pid)} == {"sent"}

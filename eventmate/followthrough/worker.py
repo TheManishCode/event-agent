@@ -18,7 +18,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from eventmate.followthrough.claims import extract_claims
 from eventmate.messaging.digests import digest_text
-from eventmate.followthrough.jobs import Job, JobStore, QuoteClaim, StaleJob, UserItem, VendorProgress
+from eventmate.followthrough.jobs import TERMINAL, Job, JobStore, QuoteClaim, StaleJob, UserItem, VendorProgress
 from eventmate.schemas import ObservationSource, VendorCategory
 
 NUDGE_TEXT = "Just checking whether you had a chance to look at our quote request. Could you share your price and availability for the date?"
@@ -91,6 +91,10 @@ class JobWorker:
     def approve_requests(self, job_id: str) -> Job:
         """Approve exactly the drafts the user was shown (each approval is bound to that draft's text hash)."""
         job = self.store.get(job_id)
+        if job.status in TERMINAL:  # checked before any draft is approved: an approved draft is sent by the next dispatch, whatever happens to the job after
+            raise ValueError(f"this job is {job.status}; start a new one to ask these vendors")
+        if job.deadline <= self.now():  # a job waiting for approval has no wake-up, so nothing else would end it
+            raise ValueError("the deadline of this job has passed; start a new one with a new deadline")
         for p in job.vendors.values():
             d = self.em.outreach_store.get(job.plan_id, p.draft_id)
             if d is not None and d.status == "prepared":
@@ -154,7 +158,9 @@ class JobWorker:
         """A job that ends leaves no message queued behind it: its automatic follow-ups and nudge drafts are denied."""
         requests = {p.draft_id for p in job.vendors.values()}
         for d in self.em.outreach_store.list(job.plan_id):
-            if d.kind == "followup" and d.parent_id in requests and d.status in ("prepared", "approved"):
+            if d.draft_id in requests and d.status in ("prepared", "approved"):  # a request that was never sent
+                self.em.outreach_store.transition(job.plan_id, d.draft_id, ("prepared", "approved"), status="denied", error="the job ended")
+            elif d.kind == "followup" and d.parent_id in requests and d.status in ("prepared", "approved"):
                 self.em.outreach_store.transition(job.plan_id, d.draft_id, ("prepared", "approved"), status="denied", error="the job ended")
 
     def cancel(self, job_id: str) -> Job:
