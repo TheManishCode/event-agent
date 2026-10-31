@@ -40,7 +40,7 @@ class WeatherNotConfigured(WeatherError):
 
 def _urllib_get(url: str, timeout: float) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:  # the URL is always built from BASE
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310 - URL is built from the https BASE
         return read_capped(resp, MAX_REPLY_BYTES + 1)
 
 

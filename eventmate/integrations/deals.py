@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, NamedTuple, Optional, Tuple
 
 from eventmate.integrations.discovery import clean_city
 from eventmate.schemas import MAX_BUDGET_INR, DealOffer, DealQuery, DealReport, MarketSummary, SkippedPage
@@ -142,6 +142,52 @@ class _Candidate:
     high: int
     label: str
     snippet: str
+
+
+class _Row(NamedTuple):
+    low_alone: bool
+    cand: _Candidate
+    corroborated: int
+    vs_market_pct: int
+    flags: Tuple[str, ...]
+    est_low: Optional[int]
+    est_high: Optional[int]
+
+
+def _cap_per_domain(cands: List[_Candidate]) -> List[_Candidate]:
+    """Cheapest first, at most MAX_OFFERS_PER_DOMAIN from any one site."""
+    kept, per_domain = [], Counter()
+    for c in sorted(cands, key=lambda c: (c.low, c.high, c.domain, c.label)):
+        if per_domain[c.domain] < MAX_OFFERS_PER_DOMAIN:
+            per_domain[c.domain] += 1
+            kept.append(c)
+    return kept
+
+
+def _score(q: DealQuery, c: _Candidate, cands: List[_Candidate], med_low: int, unit: str) -> _Row:
+    """Corroboration by other sites, distance from the market median, honesty flags, and the estimate scaled to the user's event."""
+    corr = len({o.domain for o in cands if o.domain != c.domain and abs(o.low - c.low) <= CORROBORATION_BAND * c.low})
+    pct = round((c.low - med_low) / med_low * 100) if med_low else 0
+    flags = []
+    low_alone = corr == 0 and pct <= UNUSUALLY_LOW_PCT
+    if low_alone:
+        flags.append("unusually low: no other site advertises a similar price; check what is included")
+    if c.high > c.low * WIDE_RANGE_FACTOR:
+        flags.append(f"wide range: the top is over {WIDE_RANGE_FACTOR} times the bottom, so packages differ a lot")
+    if c.assumed:
+        flags.append("the page gave no unit; the usual one for this service was assumed")
+    scale = q.guests if (unit == "per_plate" and q.guests) else (q.nights if (unit == "per_night" and q.nights) else (1 if unit == "per_event" else None))
+    est_lo, est_hi = (c.low * scale, c.high * scale) if scale else (None, None)
+    return _Row(low_alone, c, corr, pct, tuple(flags), est_lo, est_hi)
+
+
+def _offer(q: DealQuery, r: _Row, rank: int) -> DealOffer:
+    c = r.cand
+    return DealOffer(
+        rank=rank, title=c.title[:200], label=c.label, url=c.url, domain=c.domain, unit=c.unit, unit_assumed=c.assumed, low_inr=c.low, high_inr=c.high,
+        est_total_low_inr=r.est_low, est_total_high_inr=r.est_high, within_budget=(r.est_low <= q.budget_inr) if (q.budget_inr and r.est_low is not None) else None,
+        vs_market_pct=r.vs_market_pct, corroborated_by=r.corroborated, flags=r.flags, snippet=c.snippet[:200], source=f"web:{c.domain}",
+    )
 
 
 class DealAgent:
@@ -279,42 +325,17 @@ class DealAgent:
         med_low = int(statistics.median(c.low for c in cands))
         med_high = int(statistics.median(c.high for c in cands))
         market = MarketSummary(unit=unit, median_low_inr=med_low, median_high_inr=med_high, n_offers=len(cands), n_domains=len({c.domain for c in cands}))
-        ordered = sorted(cands, key=lambda c: (c.low, c.high, c.domain, c.label))
-        kept, per_domain = [], Counter()
-        for c in ordered:
-            if per_domain[c.domain] < MAX_OFFERS_PER_DOMAIN:
-                per_domain[c.domain] += 1
-                kept.append(c)
-        rows = []
-        for c in kept:
-            corr = len({o.domain for o in cands if o.domain != c.domain and abs(o.low - c.low) <= CORROBORATION_BAND * c.low})
-            pct = round((c.low - med_low) / med_low * 100) if med_low else 0
-            flags = []
-            low_alone = corr == 0 and pct <= UNUSUALLY_LOW_PCT
-            if low_alone:
-                flags.append("unusually low: no other site advertises a similar price; check what is included")
-            if c.high > c.low * WIDE_RANGE_FACTOR:
-                flags.append(f"wide range: the top is over {WIDE_RANGE_FACTOR} times the bottom, so packages differ a lot")
-            if c.assumed:
-                flags.append("the page gave no unit; the usual one for this service was assumed")
-            scale = q.guests if (unit == "per_plate" and q.guests) else (q.nights if (unit == "per_night" and q.nights) else (1 if unit == "per_event" else None))
-            est_lo, est_hi = (c.low * scale, c.high * scale) if scale else (None, None)
-            rows.append((low_alone, c, corr, pct, tuple(flags), est_lo, est_hi))
-        rows.sort(key=lambda t: (t[0], t[1].low, -t[2], t[1].domain, t[1].label))  # solid offers first, cheapest first; lone low outliers last
-        built_list, unbuilt = [], 0
-        for i, (_, c, corr, pct, flags, lo, hi) in enumerate(rows[: q.limit], 1):
+        rows = [_score(q, c, cands, med_low, unit) for c in _cap_per_domain(cands)]
+        rows.sort(key=lambda r: (r.low_alone, r.cand.low, -r.corroborated, r.cand.domain, r.cand.label))  # solid offers first, cheapest first; lone low outliers last
+        offers, unbuilt = [], 0
+        for i, row in enumerate(rows[: q.limit], 1):
             try:
-                built_list.append(DealOffer(
-                    rank=i, title=c.title[:200], label=c.label, url=c.url, domain=c.domain, unit=c.unit, unit_assumed=c.assumed, low_inr=c.low, high_inr=c.high,
-                    est_total_low_inr=lo, est_total_high_inr=hi, within_budget=(lo <= q.budget_inr) if (q.budget_inr and lo is not None) else None,
-                    vs_market_pct=pct, corroborated_by=corr, flags=flags, snippet=c.snippet[:200], source=f"web:{c.domain}",
-                ))
+                offers.append(_offer(q, row, i))
             except ValueError:  # one odd page must not cost the user every other result
                 unbuilt += 1
         if unbuilt:
             warnings.append(f"{unbuilt} offer(s) could not be built from unusual page data and were skipped")
-        built = tuple(built_list)
-        built = tuple(o.model_copy(update={"rank": n}) for n, o in enumerate(built, 1))
+        built = tuple(o.model_copy(update={"rank": n}) for n, o in enumerate(offers, 1))
         return self._report(q, built, market, pages_read, skipped, queries, warnings)
 
     def _report(self, q, offers, market, pages_read, skipped, queries, warnings) -> DealReport:

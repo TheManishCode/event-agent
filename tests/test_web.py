@@ -316,7 +316,7 @@ def test_the_avatar_is_credited_in_the_page_and_the_files_match_the_credit():
     notes = (root / "docs/ATTRIBUTIONS.md").read_text()
     assert "Polytoria Avatar V3" in page and "dantheman" in page and "CC BY 4.0" in page and 'rel="noopener noreferrer"' in page
     for name in ("avatar.glb", "model-viewer.min.js"):
-        digest = hashlib.sha256((root / "eventmate/web/static" / name).read_bytes()).hexdigest()
+        digest = hashlib.sha256((root / "eventmate/web/static" / ("vendor" if name.endswith(".js") else "") / name).read_bytes()).hexdigest()
         assert digest in notes, f"docs/ATTRIBUTIONS.md must record the SHA-256 of {name} (substituting a file must be visible)"
     assert "creativecommons.org/licenses/by/4.0" in notes and "Apache-2.0" in notes and "sketchfab.com/3d-models/polytoria-avatar-v3-pauly" in notes
     glb = (root / "eventmate/web/static/avatar.glb").read_bytes()

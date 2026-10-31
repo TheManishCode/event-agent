@@ -45,7 +45,7 @@ class PlacesNotConfigured(PlacesError):
 
 
 def _post(url: str, headers: dict, data: bytes, timeout: float) -> bytes:
-    with urllib.request.urlopen(urllib.request.Request(url, data=data, headers=headers), timeout=timeout) as resp:
+    with urllib.request.urlopen(urllib.request.Request(url, data=data, headers=headers), timeout=timeout) as resp:  # nosec B310 - fixed https URL
         return read_capped(resp, MAX_REPLY_BYTES + 1)
 
 

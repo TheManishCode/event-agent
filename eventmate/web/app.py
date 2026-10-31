@@ -16,6 +16,7 @@ for concurrent mutation of the same plan.
 
 from __future__ import annotations
 
+import gzip
 import hmac
 import json
 import logging
@@ -73,6 +74,10 @@ STATIC_FILES = {
 # and wasm-unsafe-eval, which permits WebAssembly compilation only and never string eval.
 VIEWER_STYLE_HASH = "sha256-PXtZZkJMMyc18o/DN1ZEFOJ2qEGq95IQbVaJFMOXOb0="
 LONG_CACHE = frozenset({"avatar.glb", "model-viewer.min.js", "cabinet.glb", "three.min.js"})  # large and unchanging: not re-sent on every page load
+# third-party files live in static/vendor/ but are served from the same flat /static/<name> URLs
+VENDOR_FILES = frozenset({"model-viewer.min.js", "three.min.js", "CopyShader.js", "LuminosityHighPassShader.js", "EffectComposer.js", "RenderPass.js", "ShaderPass.js", "MaskPass.js", "UnrealBloomPass.js", "GLTFLoader.js"})
+GZIP_MIN = 1024  # below this the header overhead outweighs the saving
+_gzip_cache: Dict[tuple, bytes] = {}  # (name, mtime_ns) -> compressed bytes; the file set is fixed and small
 LOOPBACK = {"127.0.0.1", "localhost", "[::1]", "::1"}
 CSP = (
     f"default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' '{VIEWER_STYLE_HASH}'; img-src 'self' data: blob:; "
@@ -556,7 +561,15 @@ def create_app(
     def static_file(name: str):
         if name not in STATIC_FILES:
             abort(404)
-        return Response((STATIC_DIR / name).read_bytes(), mimetype=STATIC_FILES[name].split(";")[0], headers={"Cache-Control": "public, max-age=3600" if name in LONG_CACHE else "no-cache"})
+        path = STATIC_DIR / ("vendor" if name in VENDOR_FILES else "") / name
+        body = path.read_bytes()
+        headers = {"Cache-Control": "public, max-age=3600" if name in LONG_CACHE else "no-cache", "Vary": "Accept-Encoding"}
+        if len(body) >= GZIP_MIN and "gzip" in request.headers.get("Accept-Encoding", "").lower():
+            key = (name, path.stat().st_mtime_ns)
+            if key not in _gzip_cache:
+                _gzip_cache[key] = gzip.compress(body, compresslevel=9, mtime=0)
+            body, headers["Content-Encoding"] = _gzip_cache[key], "gzip"
+        return Response(body, mimetype=STATIC_FILES[name].split(";")[0], headers=headers)
 
     @app.get("/api/session")
     def session():

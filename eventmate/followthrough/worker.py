@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
@@ -32,6 +33,21 @@ def _utcnow() -> datetime:
 
 def _item(kind: str, text: str, vendor_id: str = "", ref: str = "") -> UserItem:
     return UserItem(item_id=uuid.uuid4().hex[:12], kind=kind, vendor_id=vendor_id, text=text[:600], ref=ref)
+
+
+@dataclass
+class _Tick:
+    """The working copy of one job while a tick runs: each step reads and updates it, and _run writes the result back once."""
+
+    vendors: Dict[str, VendorProgress]
+    claims: List[QuoteClaim]
+    items: List[UserItem]
+    seen: set
+    awaiting: List[str]
+    events: List[str]
+
+    def has_item(self, kind: str, ref: str) -> bool:
+        return any(i.kind == kind and i.ref == ref for i in self.items)
 
 
 VendorSpec = Union[Dict[str, Tuple[str, str]], Sequence[str]]
@@ -200,114 +216,125 @@ class JobWorker:
         return report
 
     def _run(self, job: Job, now: datetime) -> Job:
+        st = _Tick(vendors=dict(job.vendors), claims=list(job.claims), items=list(job.items), seen=set(job.seen_message_ids), awaiting=list(job.answered_replies), events=[])
+        self._check_sent(job, st)
+        self._read_replies(job, st)
+        self._watch_automatic_answers(job, st)
+        self._nudge_silent_vendors(job, st, now)
+        status, next_action, wake = self._conclude(job, st, now)
+        new = job.model_copy(update={"vendors": st.vendors, "claims": tuple(st.claims), "items": tuple(st.items), "seen_message_ids": tuple(sorted(st.seen)), "answered_replies": tuple(st.awaiting), "status": status, "next_action": next_action, "wake_at": wake})
+        saved = self._persist(new, "worker", "tick", now, {"events": st.events})
+        if saved.status in ("done", "expired"):
+            self._deny_queued(saved)
+        return saved
+
+    def _check_sent(self, job: Job, st: _Tick) -> None:
+        """Did the requests actually go out? A blocked or unknown send becomes an item for the user."""
         plan_id = job.plan_id
-        vendors = dict(job.vendors)
-        claims: List[QuoteClaim] = list(job.claims)
-        items: List[UserItem] = list(job.items)
-        seen = set(job.seen_message_ids)
-        awaiting = list(job.answered_replies)
-        events: List[str] = []
-
-        def has_item(kind: str, ref: str) -> bool:
-            return any(i.kind == kind and i.ref == ref for i in items)
-
-        # 1. did the requests actually go out?
-        for vid, p in list(vendors.items()):
+        for vid, p in list(st.vendors.items()):
             if p.state != "drafted":
                 continue
             d = self.em.outreach_store.get(plan_id, p.draft_id)
             if d is None:
                 continue
             if d.status == "sent" and d.sent_at is not None:
-                vendors[vid] = p.model_copy(update={"state": "asked", "asked_at": d.sent_at})
-                events.append(f"sent:{vid}")
-            elif d.status == "blocked" and not has_item("do_not_contact", p.draft_id):
-                vendors[vid] = p.model_copy(update={"state": "unresponsive"})
-                items.append(_item("do_not_contact", f"The request to {vid} was not sent: blocked, do not contact. {d.error}".strip(), vid, p.draft_id))
-            elif d.status in ("outcome_unknown", "failed", "expired", "denied") and not has_item("check_unknown_send", p.draft_id):
-                vendors[vid] = p.model_copy(update={"state": "unresponsive"})
-                items.append(_item("check_unknown_send", f"The request to {vid} is '{d.status}'. Check the vendor chat before sending again. {d.error}".strip(), vid, p.draft_id))
+                st.vendors[vid] = p.model_copy(update={"state": "asked", "asked_at": d.sent_at})
+                st.events.append(f"sent:{vid}")
+            elif d.status == "blocked" and not st.has_item("do_not_contact", p.draft_id):
+                st.vendors[vid] = p.model_copy(update={"state": "unresponsive"})
+                st.items.append(_item("do_not_contact", f"The request to {vid} was not sent: blocked, do not contact. {d.error}".strip(), vid, p.draft_id))
+            elif d.status in ("outcome_unknown", "failed", "expired", "denied") and not st.has_item("check_unknown_send", p.draft_id):
+                st.vendors[vid] = p.model_copy(update={"state": "unresponsive"})
+                st.items.append(_item("check_unknown_send", f"The request to {vid} is '{d.status}'. Check the vendor chat before sending again. {d.error}".strip(), vid, p.draft_id))
 
-        # 2. new replies
+    def _read_replies(self, job: Job, st: _Tick) -> None:
+        """New replies: record the vendor's state, turn a price into a claim for the user to confirm, and surface questions and unclear replies."""
+        plan_id = job.plan_id
         for m in self.em.outreach_store.inbound(plan_id):
-            p = next(((v, x) for v, x in vendors.items() if x.draft_id == m.draft_id), None)
-            if p is None or m.message_id in seen:
+            p = next(((v, x) for v, x in st.vendors.items() if x.draft_id == m.draft_id), None)
+            if p is None or m.message_id in st.seen:
                 continue
             vid, prog = p
-            seen.add(m.message_id)
-            events.append(f"reply:{vid}")
-            vendors[vid] = prog.model_copy(update={"state": "unavailable" if m.analysis.says_unavailable else "replied"})
+            st.seen.add(m.message_id)
+            st.events.append(f"reply:{vid}")
+            st.vendors[vid] = prog.model_copy(update={"state": "unavailable" if m.analysis.says_unavailable else "replied"})
             if m.sender_differs:  # a reply from another address is never turned into a claim; the user reads it first
-                items.append(_item("different_sender", f"{vid}: a reply came from {m.sender}, not the address you wrote to. Read it before trusting anything in it.", vid, m.message_id))
+                st.items.append(_item("different_sender", f"{vid}: a reply came from {m.sender}, not the address you wrote to. Read it before trusting anything in it.", vid, m.message_id))
                 continue
             answered = any(x.action_key == f"reply:{m.message_id}" and x.status not in ("denied", "expired") for x in self.em.outreach_store.list(plan_id))  # the Mandate already asked its question
             if answered:
-                awaiting.append(m.message_id)  # watched below: if that question never goes out, the user is told
+                st.awaiting.append(m.message_id)  # watched below: if that question never goes out, the user is told
             new_claims, problem = extract_claims(m)
             for c in new_claims:
-                for i, old in enumerate(claims):
+                for i, old in enumerate(st.claims):
                     if old.vendor_id == vid and old.status == "proposed":
-                        claims[i] = old.model_copy(update={"status": "superseded"})
-                        items = [x.model_copy(update={"resolved": True}) if (x.kind == "confirm_claim" and x.ref == old.claim_id) else x for x in items]
-                claims.append(c)
+                        st.claims[i] = old.model_copy(update={"status": "superseded"})
+                        st.items = [x.model_copy(update={"resolved": True}) if (x.kind == "confirm_claim" and x.ref == old.claim_id) else x for x in st.items]
+                st.claims.append(c)
                 unit = "per plate" if c.basis == "per_plate" else "for the event"
-                items.append(_item("confirm_claim", f"{vid} wrote: \"{c.snippet}\" -> INR {c.amount_inr:,} {unit}. Confirm to record it as a quote (check taxes and extras in their words).", vid, c.claim_id))
+                st.items.append(_item("confirm_claim", f"{vid} wrote: \"{c.snippet}\" -> INR {c.amount_inr:,} {unit}. Confirm to record it as a quote (check taxes and extras in their words).", vid, c.claim_id))
             if problem:
-                items.append(_item("unclear_price", f"{vid}: {problem}", vid, m.message_id))
+                st.items.append(_item("unclear_price", f"{vid}: {problem}", vid, m.message_id))
             if m.analysis.questions:
-                items.append(_item("vendor_question", f"{vid} asks: " + " / ".join(m.analysis.questions), vid, m.message_id))
+                st.items.append(_item("vendor_question", f"{vid} asks: " + " / ".join(m.analysis.questions), vid, m.message_id))
             if m.analysis.says_unavailable:
-                items.append(_item("vendor_unavailable", f"{vid} says it is not available.", vid, m.message_id))
+                st.items.append(_item("vendor_unavailable", f"{vid} says it is not available.", vid, m.message_id))
             if not (new_claims or problem or m.analysis.questions or m.analysis.says_unavailable or answered):
-                items.append(_item("unclear_price", f"{vid} replied without a price. Please read the reply.", vid, m.message_id))
+                st.items.append(_item("unclear_price", f"{vid} replied without a price. Please read the reply.", vid, m.message_id))
 
-        # 2b. an automatic answer that was queued must actually go out; if it was denied, expired or failed, the reply is the user's again
-        if awaiting:
+    def _watch_automatic_answers(self, job: Job, st: _Tick) -> None:
+        """An automatic answer that was queued must actually go out; if it was denied, expired or failed, the reply is the user's again."""
+        plan_id = job.plan_id
+        if st.awaiting:
             by_id = {x.message_id: x for x in self.em.outreach_store.inbound(plan_id)}
             drafts = self.em.outreach_store.list(plan_id)
-            for mid in list(awaiting):
+            for mid in list(st.awaiting):
                 d = next((x for x in drafts if x.action_key == f"reply:{mid}"), None)
                 if d is not None and d.status in ("prepared", "approved", "sending"):
                     continue  # still on its way
-                awaiting.remove(mid)
+                st.awaiting.remove(mid)
                 if d is None or d.status in ("denied", "expired", "failed", "outcome_unknown", "blocked"):
                     owner = by_id.get(mid)
-                    vid = next((v for v, x in vendors.items() if owner and x.draft_id == owner.draft_id), "")
+                    vid = next((v for v, x in st.vendors.items() if owner and x.draft_id == owner.draft_id), "")
                     why = "no automatic answer was sent" if d is None else f"the automatic answer to them is {d.status.replace('_', ' ')}"
-                    items.append(_item("unclear_price", f"{vid} replied without a price and {why}. Please read the reply.", vid, mid))
+                    st.items.append(_item("unclear_price", f"{vid} replied without a price and {why}. Please read the reply.", vid, mid))
 
-        # 3. silence: an automatic nudge only through the standing permission (ADR-043), otherwise a draft for the user to approve
+    def _nudge_silent_vendors(self, job: Job, st: _Tick, now: datetime) -> None:
+        """Silence: an automatic nudge only through the standing permission (ADR-043), otherwise a draft for the user to approve."""
+        plan_id = job.plan_id
         window = timedelta(hours=job.reply_window_hours)
-        for vid, p in list(vendors.items()):
+        for vid, p in list(st.vendors.items()):
             if p.state != "asked" or p.asked_at is None or now < p.asked_at + window:
                 continue
             if p.nudges >= job.max_nudges_per_vendor:
-                vendors[vid] = p.model_copy(update={"state": "unresponsive"})
-                events.append(f"unresponsive:{vid}")
+                st.vendors[vid] = p.model_copy(update={"state": "unresponsive"})
+                st.events.append(f"unresponsive:{vid}")
             elif not p.pending_nudge_draft_id:
                 sent_draft, why = self.em.conversations.queue_automatic(plan_id, p.draft_id, NUDGE_TEXT, f"nudge:{job.job_id}:{vid}:{p.nudges + 1}")
                 if sent_draft is not None:
-                    vendors[vid] = p.model_copy(update={"nudges": p.nudges + 1, "asked_at": now})
-                    events.append(f"auto_nudge:{vid}:{p.nudges + 1}")
+                    st.vendors[vid] = p.model_copy(update={"nudges": p.nudges + 1, "asked_at": now})
+                    st.events.append(f"auto_nudge:{vid}:{p.nudges + 1}")
                 else:
                     follow = self.em.outreach_store.followup(plan_id, p.draft_id, NUDGE_TEXT, job.sender_name, action_key=f"nudge-draft:{job.job_id}:{vid}:{p.nudges + 1}")
-                    vendors[vid] = p.model_copy(update={"pending_nudge_draft_id": follow.draft_id})
-                    items.append(_item("approve_nudge", f"{vid} has not replied in {job.reply_window_hours}h. A short follow-up is drafted. Approve it? (not automatic: {why})", vid, follow.draft_id))
+                    st.vendors[vid] = p.model_copy(update={"pending_nudge_draft_id": follow.draft_id})
+                    st.items.append(_item("approve_nudge", f"{vid} has not replied in {job.reply_window_hours}h. A short follow-up is drafted. Approve it? (not automatic: {why})", vid, follow.draft_id))
 
-        # 4. finished, or impossible?
-        best: Dict[str, QuoteClaim] = {c.vendor_id: c for c in claims if c.status == "confirmed"}
+    def _conclude(self, job: Job, st: _Tick, now: datetime) -> Tuple[str, str, Optional[datetime]]:
+        """Finished, or impossible? Returns (status, next_action, wake_at)."""
+        window = timedelta(hours=job.reply_window_hours)
+        best: Dict[str, QuoteClaim] = {c.vendor_id: c for c in st.claims if c.status == "confirmed"}
         within = [c for c in best.values() if job.max_amount_inr is None or self._total_for(job, c) <= job.max_amount_inr]
         status, next_action, wake = job.status, job.next_action, None
         if len(within) >= job.min_quotes:
             status, next_action = "done", f"{len(within)} confirmed quotes within your cap, each tied to a vendor message"
-            items = [x.model_copy(update={"resolved": True}) if x.kind in ("approve_nudge", "vendor_unavailable") else x for x in items]
+            st.items = [x.model_copy(update={"resolved": True}) if x.kind in ("approve_nudge", "vendor_unavailable") else x for x in st.items]
         elif now > job.deadline:
             status, next_action = "expired", f"deadline passed with {len(within)} of {job.min_quotes} confirmed quotes"
         else:
-            reachable = len(within) + sum(1 for v, p in vendors.items() if v not in best and p.state in ("drafted", "asked", "replied"))
-            if reachable < job.min_quotes and not any(i.kind == "no_quotes_possible" and not i.resolved for i in items):
-                items.append(_item("no_quotes_possible", f"Only {reachable} vendor(s) can still give a quote but {job.min_quotes} are needed. Add vendors or lower the number."))
-            open_items = [i for i in items if not i.resolved]
+            reachable = len(within) + sum(1 for v, p in st.vendors.items() if v not in best and p.state in ("drafted", "asked", "replied"))
+            if reachable < job.min_quotes and not any(i.kind == "no_quotes_possible" and not i.resolved for i in st.items):
+                st.items.append(_item("no_quotes_possible", f"Only {reachable} vendor(s) can still give a quote but {job.min_quotes} are needed. Add vendors or lower the number."))
+            open_items = [i for i in st.items if not i.resolved]
             if open_items:
                 wake = now + timedelta(minutes=job.poll_minutes)  # still watching while the user decides: a newer reply can supersede an open claim
             if any(i.kind == "check_unknown_send" for i in open_items):
@@ -315,18 +342,14 @@ class JobWorker:
             elif open_items:
                 status, next_action = "waiting_user", f"{len(open_items)} item(s) need you"
             else:
-                waiting = [p for p in vendors.values() if p.state in ("drafted", "asked")]
+                waiting = [p for p in st.vendors.values() if p.state in ("drafted", "asked")]
                 if waiting:
                     due = [p.asked_at + window for p in waiting if p.asked_at is not None]
                     wake = min([now + timedelta(minutes=job.poll_minutes)] + [t for t in due if t > now])
                     status, next_action = "waiting_vendor", f"waiting for {len(waiting)} vendor(s); next check {wake.isoformat(timespec='minutes')}"
                 else:
                     status, next_action, wake = "active", "re-checking", now + timedelta(minutes=job.poll_minutes)
-        new = job.model_copy(update={"vendors": vendors, "claims": tuple(claims), "items": tuple(items), "seen_message_ids": tuple(sorted(seen)), "answered_replies": tuple(awaiting), "status": status, "next_action": next_action, "wake_at": wake})
-        saved = self._persist(new, "worker", "tick", now, {"events": events})
-        if saved.status in ("done", "expired"):
-            self._deny_queued(saved)
-        return saved
+        return status, next_action, wake
 
     def _total_for(self, job: Job, c: QuoteClaim) -> int:
         if c.basis == "per_plate":

@@ -64,7 +64,7 @@ def build_query(city: str, kind: str, limit: int) -> str:
 
 def _urllib_transport(url: str, query: str, timeout: float) -> bytes:
     req = urllib.request.Request(url, data=urllib.parse.urlencode({"data": query}).encode(), headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:  # url scheme is checked in OverpassSource.__init__
+    with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310 - https checked in OverpassSource.__init__
         return read_capped(resp, MAX_REPLY_BYTES + 1)
 
 

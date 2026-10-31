@@ -49,15 +49,16 @@ code — nothing on screen claims a stage happened that did not.
 - `eventmate/web/static/arcade3d.js` — the whole scene (room, cabinet, attendant,
   coin, sheets, CRT canvas texture with snake-routed rigid tubes, elbow fittings,
   reservoir, camera tweens, WebAudio-synthesized sound). No build step.
-- `eventmate/web/static/three.min.js` — Three.js r128, MIT license, vendored
+- `eventmate/web/static/vendor/three.min.js` — Three.js r128, MIT license, vendored
   locally so the page is CSP-safe and offline-capable.
 - `eventmate/web/static/arcade.js` — chat/intake/dossier/jam logic; calls into
   the scene (`Arcade3D.powerOn / coinInsert / stageRun / finishRun / livePulse /
   resetWorkflow / zoomIn / setStageMs`).
 - `eventmate/web/static/arcade.html`, `arcade.css` — page shell, chat overlay,
   paper dossier, replay banner, sound toggle, WebGL fallback message.
-- `web/app.py` — `STATIC_FILES` gains `arcade3d.js` and `three.min.js` (flat
-  names; the static route does not allow subdirectories).
+- `web/app.py` — `STATIC_FILES` lists every servable file by flat name; files in
+  `VENDOR_FILES` are read from `static/vendor/` (third-party code, kept apart from
+  ours). Text and model files are gzipped when the browser asks.
 
 ## Honesty guarantees (load-bearing)
 

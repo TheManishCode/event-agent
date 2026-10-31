@@ -256,6 +256,7 @@
       if (mascot.still) mv.pause();
     }, { once: true });
     mv.addEventListener("finished", () => mascotDo("Idle"));
+    host.inert = true;  // decorative: nothing inside it (including the viewer's own focusable shadow node) may take focus
     host.append(mv);
   }
   function mascotDo(name, once = false) {

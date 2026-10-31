@@ -78,8 +78,8 @@ def _public(ip: str) -> bool:
     return addr.is_global and not addr.is_multicast
 
 
-def check_url(url: str, resolver: Callable[[str], List[str]] = default_resolver) -> Tuple[str, str, List[str]]:
-    """Return (normalised url, host, public addresses) or raise UnsafeURL."""
+def _split_checked(url: str) -> urllib.parse.SplitResult:
+    """Syntax rules: printable, bounded, http(s), no credentials, default port only."""
     if not isinstance(url, str) or len(url) > MAX_URL or any(ord(c) <= 32 or ord(c) == 127 for c in url):
         raise UnsafeURL("the address is malformed")
     parts = urllib.parse.urlsplit(url)
@@ -93,32 +93,43 @@ def check_url(url: str, resolver: Callable[[str], List[str]] = default_resolver)
         raise UnsafeURL("the port is invalid") from None
     if port not in (None, 80 if parts.scheme == "http" else 443):
         raise UnsafeURL("only the default port is allowed")
+    return parts
+
+
+def _public_ips(host: str, resolver: Callable[[str], List[str]]) -> Tuple[str, List[str], bool]:
+    """Return (host, public addresses, host_is_ip_literal); raise UnsafeURL for anything not public."""
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        if not _public(host):
+            raise UnsafeURL("that address is not public")
+        return host, [host], True
+    if host == "localhost" or host.endswith((".localhost", ".local", ".internal", ".localdomain")):
+        raise UnsafeURL("that host is not public")
+    try:
+        host = host.encode("idna").decode("ascii")
+    except UnicodeError:
+        raise UnsafeURL("the host name is invalid") from None
+    labels = host.split(".")
+    if len(host) > MAX_HOST or len(labels) < 2 or not all(_LABEL.fullmatch(l) for l in labels) or not re.search(r"[a-z]", labels[-1]):
+        raise UnsafeURL("the host name is invalid")
+    ips = resolver(host)
+    if not ips or not all(_public(i) for i in ips):
+        raise UnsafeURL("that host does not resolve to a public address")
+    return host, ips, False
+
+
+def check_url(url: str, resolver: Callable[[str], List[str]] = default_resolver) -> Tuple[str, str, List[str]]:
+    """Return (normalised url, host, public addresses) or raise UnsafeURL."""
+    parts = _split_checked(url)
     host = (parts.hostname or "").lower().rstrip(".")
     if not host:
         raise UnsafeURL("the address has no host")
-    try:
-        literal = ipaddress.ip_address(host)
-    except ValueError:
-        literal = None
-    if literal is not None:
-        if not _public(host):
-            raise UnsafeURL("that address is not public")
-        ips = [host]
-    else:
-        if host == "localhost" or host.endswith((".localhost", ".local", ".internal", ".localdomain")):
-            raise UnsafeURL("that host is not public")
-        try:
-            host = host.encode("idna").decode("ascii")
-        except UnicodeError:
-            raise UnsafeURL("the host name is invalid") from None
-        labels = host.split(".")
-        if len(host) > MAX_HOST or len(labels) < 2 or not all(_LABEL.fullmatch(l) for l in labels) or not re.search(r"[a-z]", labels[-1]):
-            raise UnsafeURL("the host name is invalid")
-        ips = resolver(host)
-        if not ips or not all(_public(i) for i in ips):
-            raise UnsafeURL("that host does not resolve to a public address")
-    path = parts.path or "/"
-    norm = f"{parts.scheme}://{host if literal is None else '[' + host + ']' if ':' in host else host}{path}" + (f"?{parts.query}" if parts.query else "")
+    host, ips, literal = _public_ips(host, resolver)
+    netloc = f"[{host}]" if literal and ":" in host else host
+    norm = f"{parts.scheme}://{netloc}{parts.path or '/'}" + (f"?{parts.query}" if parts.query else "")
     return norm, host, ips
 
 

@@ -5,7 +5,7 @@ import pytest
 
 from eventmate.arcade_pulse import STAGES, ArcadePulse
 from eventmate.service import EventMate
-from eventmate.web.app import STATIC_FILES, create_app
+from eventmate.web.app import STATIC_FILES, VENDOR_FILES, create_app
 from tests.conftest import EXAMPLE, TODAY
 from tests.test_web import post
 
@@ -84,7 +84,20 @@ def test_arcade_page_and_assets_are_served_with_credit(client):
 
 def test_every_whitelisted_static_file_exists_and_page_scripts_are_local():
     for name in STATIC_FILES:
-        assert (STATIC / name).is_file(), name
+        assert (STATIC / ("vendor" if name in VENDOR_FILES else "") / name).is_file(), name
+    assert VENDOR_FILES <= set(STATIC_FILES) and not [f for f in VENDOR_FILES if (STATIC / f).exists()]  # no stray flat copies
     html = (STATIC / "arcade.html").read_text()
     for src in re.findall(r'<script[^>]+src="([^"]+)"', html):
         assert src.startswith("/static/") and src.rsplit("/", 1)[-1] in STATIC_FILES, src
+
+
+def test_assets_are_gzipped_only_when_asked_and_round_trip(client):
+    import gzip
+
+    for name, vendor in (("app.js", False), ("three.min.js", True), ("avatar.glb", False)):
+        raw = (STATIC / ("vendor" if vendor else "") / name).read_bytes()
+        plain = client.get(f"/static/{name}")
+        assert plain.status_code == 200 and "Content-Encoding" not in plain.headers and plain.data == raw
+        zipped = client.get(f"/static/{name}", headers={"Accept-Encoding": "gzip, deflate"})
+        assert zipped.headers["Content-Encoding"] == "gzip" and "Accept-Encoding" in zipped.headers["Vary"]
+        assert len(zipped.data) < len(raw) and gzip.decompress(zipped.data) == raw

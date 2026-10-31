@@ -21,7 +21,7 @@ eventmate = "eventmate.__main__:main"
 include = ["eventmate*"]
 
 [tool.setuptools.package-data]
-eventmate = ["data/*.json", "data/knowledge/*", "web/static/*", "assistant/*.json"]
+eventmate = ["data/*.json", "data/knowledge/*", "web/static/*", "web/static/vendor/*", "assistant/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

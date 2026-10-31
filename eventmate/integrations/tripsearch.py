@@ -42,20 +42,16 @@ def _pick(search: FlightSearch, key) -> Optional[FlightOption]:
     return min(priced, key=key) if priced else None
 
 
-def search_trip(
-    provider: FlightProvider, req: TripRequest, today: date, deadline_s: float = 90.0, workers: int = 4, on_call: Optional[OnCall] = None
-) -> TripSearchResult:
-    check_date(req.earliest_start, today)
-    plans = _plans(req)
-    unique = list(dict.fromkeys(leg for _, _, legs in plans for leg in legs))
-    if len(unique) > req.max_searches:
-        raise ValueError(
-            f"this trip needs {len(unique)} searches but the limit is {req.max_searches}; set fixed_order, remove a stop, or reduce flex_days"
-        )
+def _label(leg: Leg) -> str:
+    return f"{leg[0]} to {leg[1]} on {leg[2].isoformat()}"
 
-    results: Dict[Leg, Optional[FlightSearch]] = {}
+
+def _fetch_legs(
+    provider: FlightProvider, req: TripRequest, unique: List[Leg], deadline_s: float, workers: int, on_call: Optional[OnCall]
+) -> Tuple[Dict[Leg, FlightSearch], Dict[Leg, str], bool]:
+    """Search every distinct leg once, in parallel, until the deadline. Returns (results, errors, timed_out)."""
+    results: Dict[Leg, FlightSearch] = {}
     errors: Dict[Leg, str] = {}
-    warnings: List[str] = []
 
     def run(leg: Leg) -> None:
         o, d, day = leg
@@ -72,29 +68,27 @@ def search_trip(
 
     pool = ThreadPoolExecutor(max_workers=max(1, workers))
     futures = [pool.submit(run, leg) for leg in unique]
-    done, pending = wait(futures, timeout=deadline_s)
+    _, pending = wait(futures, timeout=deadline_s)
     for f in pending:
         f.cancel()
     pool.shutdown(wait=False, cancel_futures=True)
-    if pending:
-        warnings.append(f"the search stopped at the time limit ({deadline_s:g}s); results are partial")
-    used = len(results) + len(errors)
+    return results, errors, bool(pending)
 
-    def label(leg: Leg) -> str:
-        return f"{leg[0]} to {leg[1]} on {leg[2].isoformat()}"
 
+def _leg_warnings(unique: List[Leg], results: Dict[Leg, FlightSearch], errors: Dict[Leg, str]) -> List[str]:
+    out: List[str] = []
     for leg in unique:
         if leg in errors:
-            warnings.append(f"{label(leg)} could not be searched: {errors[leg]}")
+            out.append(f"{_label(leg)} could not be searched: {errors[leg]}")
         elif leg in results and not any(o.price_inr is not None for o in results[leg].options):
-            warnings.append(f"{label(leg)} has no priced flights")
+            out.append(f"{_label(leg)} has no priced flights")
+    return out
 
-    hours = req.value_per_hour_inr / 60.0
-    metrics = {
-        "cheapest": lambda o: (o.price_inr, o.duration_min),
-        "fastest": lambda o: (o.duration_min, o.price_inr),
-        "best_value": lambda o: (o.price_inr + o.duration_min * hours, o.duration_min),
-    }
+
+def _candidates(
+    plans, results: Dict[Leg, FlightSearch], metrics: Dict[str, Callable], hours: float
+) -> Tuple[Dict[str, List[TripPackage]], Dict[Tuple[Tuple[str, ...], date], int], int]:
+    """Price every plan under each metric. A plan with any unpriceable leg is dropped. Returns (candidates, cheapest totals, dropped)."""
     candidates: Dict[str, List[TripPackage]] = {k: [] for k in metrics}
     cheapest_totals: Dict[Tuple[Tuple[str, ...], date], int] = {}
     dropped = 0
@@ -118,38 +112,72 @@ def search_trip(
             total = sum(x.option.price_inr for x in tl)
             minutes = sum(x.option.duration_min for x in tl)
             candidates[k].append(TripPackage(
-                label=k if k in ("cheapest", "fastest", "best_value") else "alternative", order=order, start_date=start, legs=tuple(tl),
+                label=k, order=order, start_date=start, legs=tuple(tl),
                 total_price_inr=total, total_flight_minutes=minutes, value_score_inr=round(total + minutes * hours), below_median_inr=0,
             ))
             if k == "cheapest":
                 cheapest_totals[(order, start)] = total
+    return candidates, cheapest_totals, dropped
 
-    if not cheapest_totals:
-        warnings.append("no complete itinerary could be priced; widen the dates, try fixed_order, or search again later")
-        return TripSearchResult(request=req, searches_planned=len(unique), searches_used=used, orderings_considered=len({p[0] for p in plans}),
-                                dropped_orders=dropped, warnings=tuple(warnings), fetched_at=datetime.now(timezone.utc), note=MULTI_CITY_NOTE)
 
-    median = int(statistics.median_low(cheapest_totals.values()))
-    rank = {
-        "cheapest": lambda p: (p.total_price_inr, p.total_flight_minutes, p.order, p.start_date),
-        "fastest": lambda p: (p.total_flight_minutes, p.total_price_inr, p.order, p.start_date),
-        "best_value": lambda p: (p.value_score_inr, p.total_price_inr, p.order, p.start_date),
-    }
-    top = {k: min(candidates[k], key=rank[k]) for k in metrics}
-    packages = [p.model_copy(update={"below_median_inr": median - p.total_price_inr}) for p in (top["cheapest"], top["fastest"], top["best_value"])]
-    seen = {(p.order, p.start_date, tuple(l.option.price_inr for l in p.legs)) for p in packages}
-    extras = []
-    for p in sorted(candidates["best_value"], key=rank["best_value"]):
-        sig = (p.order, p.start_date, tuple(l.option.price_inr for l in p.legs))
-        if sig not in seen:
-            seen.add(sig)
+_RANK = {
+    "cheapest": lambda p: (p.total_price_inr, p.total_flight_minutes, p.order, p.start_date),
+    "fastest": lambda p: (p.total_flight_minutes, p.total_price_inr, p.order, p.start_date),
+    "best_value": lambda p: (p.value_score_inr, p.total_price_inr, p.order, p.start_date),
+}
+
+
+def _signature(p: TripPackage) -> tuple:
+    return (p.order, p.start_date, tuple(l.option.price_inr for l in p.legs))
+
+
+def _choose_packages(candidates: Dict[str, List[TripPackage]], median: int) -> List[TripPackage]:
+    """The best package under each metric, then up to EXTRA_PACKAGES distinct best-value alternatives."""
+    top = [min(candidates[k], key=_RANK[k]) for k in ("cheapest", "fastest", "best_value")]
+    packages = [p.model_copy(update={"below_median_inr": median - p.total_price_inr}) for p in top]
+    seen = {_signature(p) for p in packages}
+    extras: List[TripPackage] = []
+    for p in sorted(candidates["best_value"], key=_RANK["best_value"]):
+        if _signature(p) not in seen:
+            seen.add(_signature(p))
             extras.append(p.model_copy(update={"label": "alternative", "below_median_inr": median - p.total_price_inr}))
         if len(extras) == EXTRA_PACKAGES:
             break
-    return TripSearchResult(
-        request=req, packages=tuple(packages + extras), searches_planned=len(unique), searches_used=used, orderings_considered=len({p[0] for p in plans}),
-        dropped_orders=dropped, insights=tuple(_insights(req, cheapest_totals)), warnings=tuple(warnings), fetched_at=datetime.now(timezone.utc), note=MULTI_CITY_NOTE,
-    )
+    return packages + extras
+
+
+def search_trip(
+    provider: FlightProvider, req: TripRequest, today: date, deadline_s: float = 90.0, workers: int = 4, on_call: Optional[OnCall] = None
+) -> TripSearchResult:
+    check_date(req.earliest_start, today)
+    plans = _plans(req)
+    unique = list(dict.fromkeys(leg for _, _, legs in plans for leg in legs))
+    if len(unique) > req.max_searches:
+        raise ValueError(
+            f"this trip needs {len(unique)} searches but the limit is {req.max_searches}; set fixed_order, remove a stop, or reduce flex_days"
+        )
+
+    results, errors, timed_out = _fetch_legs(provider, req, unique, deadline_s, workers, on_call)
+    warnings: List[str] = []
+    if timed_out:
+        warnings.append(f"the search stopped at the time limit ({deadline_s:g}s); results are partial")
+    warnings += _leg_warnings(unique, results, errors)
+
+    hours = req.value_per_hour_inr / 60.0
+    metrics = {
+        "cheapest": lambda o: (o.price_inr, o.duration_min),
+        "fastest": lambda o: (o.duration_min, o.price_inr),
+        "best_value": lambda o: (o.price_inr + o.duration_min * hours, o.duration_min),
+    }
+    candidates, cheapest_totals, dropped = _candidates(plans, results, metrics, hours)
+    shared = dict(request=req, searches_planned=len(unique), searches_used=len(results) + len(errors), orderings_considered=len({p[0] for p in plans}),
+                  dropped_orders=dropped, fetched_at=datetime.now(timezone.utc), note=MULTI_CITY_NOTE)
+    if not cheapest_totals:
+        warnings.append("no complete itinerary could be priced; widen the dates, try fixed_order, or search again later")
+        return TripSearchResult(warnings=tuple(warnings), **shared)
+
+    median = int(statistics.median_low(cheapest_totals.values()))
+    return TripSearchResult(packages=tuple(_choose_packages(candidates, median)), insights=tuple(_insights(req, cheapest_totals)), warnings=tuple(warnings), **shared)
 
 
 def _insights(req: TripRequest, totals: Dict[Tuple[Tuple[str, ...], date], int]) -> List[str]:

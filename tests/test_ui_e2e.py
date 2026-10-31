@@ -1026,6 +1026,19 @@ def test_the_avatar_loads_reacts_and_never_breaks_the_page(server):
     assert problems == []
 
 
+def test_the_decorative_avatar_never_takes_keyboard_focus(server):
+    with pw.sync_playwright() as p:
+        browser = p.chromium.launch(executable_path=CHROMIUM, args=["--no-sandbox"])
+        page = browser.new_page()
+        page.goto(server)
+        page.wait_for_selector("#mascot model-viewer", timeout=30000)
+        assert page.evaluate("document.querySelector('#mascot').inert")
+        for _ in range(40):
+            page.keyboard.press("Tab")
+            assert not page.evaluate("!!document.activeElement.closest('#mascot')")
+        browser.close()
+
+
 def test_the_page_works_when_the_avatar_cannot_load(server):
     with pw.sync_playwright() as p:
         browser = p.chromium.launch(executable_path=CHROMIUM, args=["--no-sandbox"])

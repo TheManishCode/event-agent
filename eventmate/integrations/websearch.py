@@ -53,7 +53,7 @@ class SearchProvider:
 def _ddg_post(query: str) -> str:
     data = urllib.parse.urlencode({"q": query, "kl": "in-en"}).encode()
     req = urllib.request.Request("https://html.duckduckgo.com/html/", data=data, headers={"User-Agent": _BROWSER_UA})
-    with urllib.request.urlopen(req, timeout=TIMEOUT_S) as resp:
+    with urllib.request.urlopen(req, timeout=TIMEOUT_S) as resp:  # nosec B310 - fixed https URL
         return read_capped(resp, MAX_REPLY_BYTES).decode("utf-8", "replace")
 
 
@@ -90,7 +90,7 @@ class DuckDuckGoHtml(SearchProvider):
 
 
 def _brave_get(url: str, headers: dict) -> bytes:
-    with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=TIMEOUT_S) as resp:
+    with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=TIMEOUT_S) as resp:  # nosec B310 - URL is built from the fixed https Brave endpoint
         return read_capped(resp, MAX_REPLY_BYTES)
 
 

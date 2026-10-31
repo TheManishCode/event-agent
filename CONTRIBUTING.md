@@ -15,7 +15,8 @@ Planning tests need Fast Downward and VAL (`EVENTMATE_FD`, `EVENTMATE_VAL`; see 
 - Cross-boundary structures are frozen Pydantic models with `extra="forbid"`. Money is whole INR integers.
 - Prompts live in `prompts/` as versioned Markdown (wording and output format only). Add `vN+1`; never edit a used prompt.
 - Record a decision in `docs/DECISIONS.md` (new ADR), update `docs/ROADMAP.md`, and update `docs/HANDOFF.md` in the same change. A test enforces this.
-- Keep `python -m pyflakes eventmate tests` clean.
+- Keep `make check` (pyflakes, JS syntax, bandit, tests) green; CI runs the same steps.
+- New functions stay small: complexity above 15 (`radon cc -n D`) means split it. Third-party front-end code goes in `eventmate/web/static/vendor/` with its licence and a SHA-256 in `docs/ATTRIBUTIONS.md`.
 
 ## Layout
 Put new code in the subpackage that matches its purpose (`planning`, `pricing`, `messaging`, `followthrough`, `sourcing`, `integrations`, `agents`). Read-only integrations must not import models or shells (a test enforces this).
