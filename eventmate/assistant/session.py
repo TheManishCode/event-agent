@@ -32,7 +32,6 @@ class SessionStore:
     def __init__(self):
         self._turns: Dict[Tuple[str, str], Deque[Tuple[str, str]]] = {}
         self._facts: Dict[Tuple[str, str], List[Tuple[str, str]]] = {}
-        self._count: Dict[Tuple[str, str], int] = {}
         self._lock = threading.Lock()
 
     @staticmethod
@@ -45,7 +44,6 @@ class SessionStore:
         k = (user, plan_id)
         with self._lock:
             self._turns.setdefault(k, deque(maxlen=MAX_TURNS)).append((q, a))
-            self._count[k] = self._count.get(k, 0) + 1
 
     def add_fact(self, plan_id: str, user: str, text: str, source: str) -> None:
         text, k = self._clean(text, MAX_FACT), (user, plan_id)
@@ -63,11 +61,11 @@ class SessionStore:
     def clear(self, plan_id: str, user: str) -> None:
         k = (user, plan_id)
         with self._lock:
-            self._turns.pop(k, None), self._facts.pop(k, None), self._count.pop(k, None)
+            self._turns.pop(k, None), self._facts.pop(k, None)
 
     def clear_plan(self, plan_id: str) -> None:
         with self._lock:
-            for d in (self._turns, self._facts, self._count):
+            for d in (self._turns, self._facts):
                 for k in [k for k in d if k[1] == plan_id]:
                     del d[k]
 
