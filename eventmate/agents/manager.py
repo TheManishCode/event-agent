@@ -92,6 +92,8 @@ _GUESTS = [
     re.compile(r"(?<![\d,.])(\d{1,12})\s*-?\s*(?:person|persons|people|guests?|pax|attendees?)\b", re.I | re.A),
     re.compile(r"\bguests?(?:\s+count)?\s*(?:of|:|=)\s*(\d{1,12})\b", re.I | re.A),
 ]
+# Used only when no explicit "guests / people / pax" count exists, so "2 kids and 40 guests" is never read as a conflict.
+_GUESTS_GROUP = re.compile(r"(?<![\d,.])(\d{1,12})\s*-?\s*(?:friends|relatives|invitees?|colleagues|coworkers|classmates)\b", re.I | re.A)
 _CITY_FALLBACK = re.compile(r"\b(?:in|at|near)\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\b", re.A)
 _NOT_CITIES = frozenset({"rs", "inr", "the", "this", "our", "my", "a", "an"})
 _NEGATION = re.compile(r"\b(?:no|not|without|skip|exclude|excluding|never|don't|dont)\b", re.I | re.A)
@@ -260,6 +262,8 @@ def _parse_budget(text: str, problems: List[str]) -> Optional[int]:
 
 def _parse_guests(text: str, problems: List[str]) -> Optional[int]:
     values = {int(m.group(1)) for rx in _GUESTS for m in rx.finditer(text)}
+    if not values:
+        values = {int(m.group(1)) for m in _GUESTS_GROUP.finditer(text)}
     if not values:
         problems.append("guest count not found (e.g. '120 guests')")
         return None

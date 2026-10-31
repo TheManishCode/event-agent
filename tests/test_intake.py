@@ -301,3 +301,14 @@ def test_a_provider_error_is_not_retried_and_says_unavailable(tmp_path):
 
     t = _turn(tmp_path, Down())
     assert Down.calls == 1 and any("unavailable" in n for n in t.notes) and t.source == "rule:parser"
+
+
+# ---- live-run miss: "40 friends"
+
+@pytest.mark.parametrize("text,count", [("birthday for 40 friends in Pune on 2026-12-12, 90000 budget", 40), ("30 relatives and 10 friends coming", None), ("party for 25 colleagues in Pune", 25)])
+def test_a_group_word_stands_in_for_guests_only_when_no_explicit_count_exists(logs, text, count):
+    assert turn(logs, [text]).draft.guest_count == count  # the second text has two different groups: ask, do not guess
+
+
+def test_an_explicit_guest_count_wins_over_group_words(logs):
+    assert turn(logs, ["2 friends will perform for 120 guests in Pune on 2026-12-12 with 200000 budget"]).draft.guest_count == 120
