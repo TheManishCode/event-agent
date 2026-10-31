@@ -1921,6 +1921,12 @@ class Idea(_Model):
     fields_used: Tuple[IdeaField, ...] = Field(min_length=1, max_length=8)
     status: Literal["suggestion"] = "suggestion"
     source: str = Field(pattern=r"^(llm:[A-Za-z0-9_.-]{1,60}|rule:idea_templates)$")
+    review_note: str = Field(default="", max_length=240)  # "Organiser to check ...": shown with the idea; the idea is kept, not dropped
+
+    @field_validator("review_note")
+    @classmethod
+    def _note_ok(cls, v: str) -> str:
+        return _clean_text(v)
 
     @field_validator("title", "why", "est_cost_note")
     @classmethod

@@ -24,6 +24,7 @@ from eventmate.jsonl import JsonlLog
 from eventmate.llm import LLMClient, PromptError, PromptStore
 from eventmate.logs import RunLogs
 from eventmate.netutil import loads
+from eventmate.assistant.guard import scan as _scan_instruction
 from eventmate.privacy import Placeholders
 from eventmate.schemas import (
     IDEA_FIELDS, AgentName, ConstraintCheck, DecisionType, DroppedIdea, Idea, IdeaDecision, IdeaSet, IdeaView, PlanNote, PlanVersion, VendorCategory,
@@ -49,12 +50,43 @@ _AVAILABILITY = re.compile(
     r"|\b(?:slots?|dates?|rooms?|halls?)\s+(?:is\s+|are\s+)?(?:open|free|left|vacant)\b|\b(?:open|free)\s+on\b", re.I,
 )
 _CAPACITY = re.compile(r"\bcapacity\b|\b(?:holds?|seats?|fits?|accommodates?|sleeps?)\s+(?:up to\s+|about\s+|around\s+|over\s+)?\d", re.I)
+# A claim about what a tradition requires or means is blocked; the word "traditional" used to describe an ordinary corner or style is kept with a note for the organiser.
 _CULTURAL = re.compile(
-    r"\b(?:tradition(?:al|ally)?|ritual|rituals|auspicious|muhurat|muhurta|customary|customs?\s+(?:say|require|demand)|religious(?:ly)?|sacred|taboo|"
-    r"must\s+(?:be|have)\s+(?:done|performed)|as per (?:tradition|custom))\b", re.I,
+    r"\b(?:ritual|rituals|auspicious|muhurat|muhurta|customary|customs?\s+(?:say|require|demand)|religious(?:ly)?|sacred|taboo|"
+    r"must\s+(?:be|have)\s+(?:done|performed)|as per (?:tradition|custom)|tradition(?:s)?\s+(?:requires?|says?|demands?|dictates?|means?|states?|holds?)|"
+    r"it is (?:a )?tradition|symboli[sz]\w*|brings? (?:good )?luck)\b", re.I,
+)
+_CULTURAL_SOFT = re.compile(r"\btradition(?:al|ally|s)?\b", re.I)
+# Hazards are never advice. Each is blocked with a reason; none is softened.
+_HAZARDS = (
+    ("payment", re.compile(r"\b(?:pay|paying|transfer|send|wire|remit|deposit)\b[^.\n]{0,40}\b(?:advance|deposit|amount|money|fee|balance|payment|booking)\b|\b(?:upi|neft|imps|rtgs|ifsc|gpay|google pay|phonepe|paytm|bank (?:account|transfer))\b|\badvance payment\b", re.I),
+     "payment or transfer instructions need a person, not an idea"),
+    ("safety", re.compile(r"\b(?:guarantee[ds]?|100%|completely|totally|fully)\s+(?:safe|allergen[- ]free|nut[- ]free|peanut[- ]free|gluten[- ]free)\b|\bguarantee\w*\b|\b(?:safe for (?:all )?allerg\w+|allergy[- ]safe|risk[- ]free|allergen[- ]free)\b", re.I),
+     "a safety or allergen guarantee cannot be made here; ask the caterer and record their answer"),
+    ("fire", re.compile(r"\b(?:fire (?:dance|show|performance|breath\w*|eating|juggl\w*)|open flames?|real flames?|fireworks?|firecrackers?|pyrotechnic\w*|bonfire|sparklers?)\b", re.I),
+     "open flames and fireworks need a safety decision by a person"),
+    ("alcohol", re.compile(r"\b(?:alcohol\w*|liquor|beer|wine|whisk(?:e)?y|vodka|cocktails?|bartend\w*|open bar)\b", re.I),
+     "alcohol depends on who attends and the rules that apply; a person decides"),
+    ("phone", re.compile(r"(?<![\w.])(?:\+?\d[\s().-]?){9,}\d(?![\w])"), "a phone number is not an idea; contacts come from the vendor's own page"),
+    ("domain", re.compile(r"\b[a-z0-9-]{2,}(?:\.[a-z0-9-]{2,})*\.(?:com|in|org|net|io|app|xyz|info|biz|shop|online|site|store|dev|ai)\b", re.I), "a web address is not an idea"),
+)
+_EXTRA_INSTRUCTION = re.compile(r"\b(?:email|send|forward)\b[^.\n]{0,20}\b(?:the plan|this plan|my plan|the guest list)\b", re.I)
+# Words that make a capitalised phrase a description of an item or activity, not the name of a business.
+_GENERIC = frozenset(
+    "floral flower flowers rangoli live rent hire event events balloon balloons fairy light lights lighting photo booth kids kid children childrens table tables linen themed theme "
+    "music dance stage entrance garden outdoor indoor wedding birthday party engagement festive marigold jasmine candle candles diya lantern lanterns paper fabric rental furniture sound "
+    "decor decoration decorations decorative craft crafts games game dj band dhol acoustic diy simple basic classic modern rustic traditional vintage cultural community student "
+    "students team group family friends guest guests welcome signage banner banners bunting art painting mehendi henna haldi sangeet food drink drinks snack snacks dessert desserts "
+    "the a an and for with in on at of to your our add use try set plan pick choose arrange".split()
 )
 _BIZ = r"(?:Caterers?|Catering|Events?|Studios?|Photography|Photographers?|Decorators?|Decorations|Banquets?|Resorts?|Hospitality|Productions?|Enterprises|Services|Entertainment|Florists?|Bakery|Bakers|Travels|Rentals)"
 _BUSINESS = re.compile(rf"\b(?:[A-Z][\w&'.-]*\s+){{1,3}}{_BIZ}\b")
+
+
+def _generic_phrase(match_text: str) -> bool:
+    """True when every capitalised word before the business-type word is an ordinary decor or activity word ("Floral Decorations", "Live Entertainment")."""
+    lead = match_text.split()[:-1]
+    return bool(lead) and all(w.strip(".,'&-").casefold() in _GENERIC for w in lead)
 _BOOK_NAME = re.compile(r"\b(?:book|hire|call|contact|visit|order from)\s+(?:the\s+)?([A-Z][\w&'-]+(?:\s+[A-Z][\w&'-]+)+)")
 
 
@@ -95,13 +127,27 @@ def guard_idea(item: dict, vendor_names: Iterable[str], available_fields: Option
         return "availability: states or implies availability"
     if _CAPACITY.search(blob):
         return "capacity: states how many people a place holds"
+    for kind, rx, why in _HAZARDS:
+        if rx.search(blob):
+            return f"hazard: {kind}: {why}"
+    if _scan_instruction(blob) or _EXTRA_INSTRUCTION.search(blob):
+        return "hazard: instruction: text that tries to instruct the assistant"
     if _CULTURAL.search(blob):
         return "cultural: makes a tradition, ritual or religious claim"
     known = [v.casefold() for v in vendor_names if v]
-    for m in list(_BUSINESS.finditer(blob)) + list(_BOOK_NAME.finditer(blob)):
+    for m in list(_BUSINESS.finditer(blob)):
+        if not _generic_phrase(m.group(0)) and not any(v in m.group(0).casefold() for v in known):
+            return f"vendor: names a business that is not in the database ({_words(m.group(0))[:40]})"
+    for m in _BOOK_NAME.finditer(blob):
         if not any(v in m.group(0).casefold() for v in known):
             return f"vendor: names a business that is not in the database ({_words(m.group(0))[:40]})"
     return None
+
+
+def idea_review_note(item: dict) -> str:
+    """A visible note for an idea that passed but touches culture: shown to the organiser instead of dropping the idea. Empty when there is nothing to check."""
+    blob = " ".join(str(item.get(k, "")) for k in ("title", "why")) if isinstance(item, dict) else ""
+    return "Organiser to check: this idea mentions a tradition. EventMate does not know what your family or community expects; ask them before relying on it." if _CULTURAL_SOFT.search(blob) else ""
 
 
 # ------------------------------------------------------------------ templates
@@ -307,7 +353,7 @@ class IdeaService:
                     try:
                         accepted.append(Idea(
                             idea_id=self._idea_id(plan.plan_id, raw["kind"], raw["title"]), kind=raw["kind"], title=raw["title"].strip(), why=raw["why"].strip(),
-                            est_cost_note=raw.get("est_cost_note", "").strip(), fields_used=tuple(raw["fields_used"]), source=f"llm:{model}",
+                            est_cost_note=raw.get("est_cost_note", "").strip(), fields_used=tuple(raw["fields_used"]), source=f"llm:{model}", review_note=idea_review_note(raw),
                         ))
                         continue
                     except ValidationError as exc:

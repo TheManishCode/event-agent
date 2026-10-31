@@ -101,7 +101,7 @@ class OverpassSource:
             raw = self._transport(self.url, query, TIMEOUT_S)
         except urllib.error.HTTPError as exc:
             if exc.code in (429, 502, 503, 504):
-                raise DiscoveryError("the public place-search server is busy; try again in a minute, or set EVENTMATE_OVERPASS_URL to another Overpass server") from exc
+                raise DiscoveryError(f"the public place-search server answered HTTP {exc.code} (busy or down); try again in a minute, or set EVENTMATE_OVERPASS_URL to another Overpass server") from exc
             raise DiscoveryError(f"the place search was refused (HTTP {exc.code})") from exc
         except NETWORK_ERRORS as exc:
             raise DiscoveryError("the place search service could not be reached; try again shortly") from exc

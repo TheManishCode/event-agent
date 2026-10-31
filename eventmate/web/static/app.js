@@ -736,6 +736,7 @@
       card.append(el("div", { class: "alt idea", "data-idea": i.idea_id },
         el("span", { class: "tag", text: titleCase(i.kind) }), " ", el("b", { text: i.title }),
         el("div", { class: "muted", text: i.why }), i.est_cost_note ? el("div", { class: "muted", text: "Cost: " + i.est_cost_note }) : null,
+        i.review_note ? el("div", { class: "bad idea-review", text: i.review_note }) : null,
         el("div", { class: "actions" },
           d.pinned.includes(i.idea_id) ? el("span", { class: "tag eli", text: "pinned" }) : el("button", { class: "btn small pin", type: "button", text: "Pin", on: { click: async () => { const res = await api(`${base}/ideas/${i.idea_id}/pin`, { method: "POST", body: {} }); if (res.ok) renderIdeas(card); else msg.textContent = (res.data && res.data.error) || "Could not pin."; } } }),
           el("button", { class: "btn small dismiss", type: "button", text: "Dismiss", on: { click: async () => { const res = await api(`${base}/ideas/${i.idea_id}/dismiss`, { method: "POST", body: {} }); if (res.ok) renderIdeas(card); else msg.textContent = (res.data && res.data.error) || "Could not dismiss."; } } }))));

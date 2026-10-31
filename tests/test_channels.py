@@ -264,3 +264,11 @@ def test_channels_from_env_reads_names_only_and_repr_hides_secrets():
     chans = channels_from_env({"EVENTMATE_WAHA_URL": "http://localhost:3000/", "EVENTMATE_WAHA_API_KEY": "topsecret", "EVENTMATE_SMTP_PORT": "99999999"})
     assert chans["whatsapp"].status().can_send and not chans["email"].status().can_send
     assert "topsecret" not in repr(chans["whatsapp"].config) and chans["email"].config.smtp_port == 465
+
+
+@pytest.mark.parametrize("bad", ["a@b.test, c@d.test", "a@b.test;c@d.test", "a@b.test c@d.test", "Name <a@b.test>", "", "a@b", "a@b.test\nBcc: x@y.test"])
+def test_the_channel_itself_refuses_a_recipient_that_is_not_one_plain_address(bad):
+    smtp = FakeSMTP()
+    with pytest.raises(ChannelError):
+        mail_channel(smtp).send(bad, "s", "b")
+    assert smtp.sent == []

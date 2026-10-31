@@ -28,7 +28,7 @@ from typing import Callable, Dict, List, Mapping, Optional, Protocol, Sequence, 
 from urllib.parse import quote, urlencode, urlsplit
 
 from eventmate.netutil import NETWORK_ERRORS, loads, read_capped
-from eventmate.schemas import ChannelStatus
+from eventmate.schemas import ChannelStatus, _EMAIL
 
 MAX_BODY_CHARS = 4000
 MAX_POLL_MESSAGES = 50
@@ -183,6 +183,9 @@ class EmailChannel:
         c = self.config
         if not self.status().can_send:
             raise ChannelError("email sending is not configured")
+        if not isinstance(recipient, str) or not _EMAIL.fullmatch(recipient.strip()):
+            raise ChannelError("the recipient must be one plain email address")  # the channel enforces it too: a list would deliver one message to several people
+        recipient = recipient.strip()
         msg = EmailMessage(policy=email.policy.SMTP)
         try:
             msg["From"], msg["To"], msg["Subject"] = c.from_addr, recipient, subject

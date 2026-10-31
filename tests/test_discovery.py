@@ -209,3 +209,12 @@ def test_api_discovery_failure_is_a_clean_502(em):
     em.discovery = src(Transport(exc=OSError("down")))
     r = csrf_get(create_app(em, today_fn=lambda: TODAY).test_client(), "/api/discover/venues?city=Pune")
     assert r.status_code == 502 and "Traceback" not in r.get_data(as_text=True)
+
+
+def test_the_real_http_status_is_reported_not_a_generic_failure():
+    import io
+    import urllib.error
+
+    err = urllib.error.HTTPError("https://overpass.example", 502, "Bad Gateway", {}, io.BytesIO(b""))
+    with pytest.raises(DiscoveryError, match="HTTP 502"):
+        src(Transport(exc=err)).venues("Pune")

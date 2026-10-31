@@ -126,7 +126,11 @@ def _alternatives(ctx: ToolContext, a: CategoryArgs):
 def _budget(ctx: ToolContext, _):
     p = ctx.em.store.latest(ctx.plan_id)
     s = ctx.em.ledger_summary(ctx.plan_id)
-    return {"budget_total": s.budget_total, "planned_total": s.planned_total, "quoted_total": s.quoted_total, "committed_total": s.committed_total,
+    pct = round(100 * s.planned_total / s.budget_total) if s.budget_total else 0
+    remaining = s.budget_total - s.planned_total
+    return {"budget_total": s.budget_total, "planned_total": s.planned_total, "planned_percent_of_budget": pct, "remaining_after_planned": remaining,
+            "derivation": f"planned {s.planned_total} / budget {s.budget_total} = {pct} percent; budget {s.budget_total} - planned {s.planned_total} = {remaining} (computed by EventMate, not by the model)",
+            "quoted_total": s.quoted_total, "committed_total": s.committed_total,
             "paid_total": s.paid_total, "pending_total": s.pending_total, "headroom": s.headroom, "plan_version": p.version,
             "vendors": [{"category": x.category.value, "name": x.name, "cost": x.cost} for x in p.selections]}
 

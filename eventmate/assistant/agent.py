@@ -326,7 +326,8 @@ def _render(tool: str, d: Dict[str, Any]) -> str:
     if tool == "get_budget_status":
         over = "over" if d["headroom"] < 0 else "under"
         return (f"Budget {_inr(d['budget_total'])}. Planned vendors cost {_inr(d['planned_total'])}. Committed {_inr(d['committed_total'])}, paid {_inr(d['paid_total'])}, "
-                f"{_inr(abs(d['headroom']))} {over} budget (as recorded by you; EventMate pays nothing).")
+                f"{_inr(abs(d['headroom']))} {over} budget (as recorded by you; EventMate pays nothing). Planned vendors are {d['planned_percent_of_budget']}% of the budget "
+                f"({_inr(d['planned_total'])} of {_inr(d['budget_total'])}).")
     if tool == "check_budget_reality":
         return f"{d['message']} ({d['basis']})"
     if tool == "search_knowledge":

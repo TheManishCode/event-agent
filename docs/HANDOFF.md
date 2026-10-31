@@ -4,7 +4,7 @@ Read this first, then `AI_CODING_RULES.md`, `DECISIONS.md`, `ROADMAP.md`. Update
 change as any code or decision change, and at the end of every session. Stale handoff = unfinished work.
 
 Last updated: 2026-10-31
-Updated by: Claude (discovered vendors, contacts, suppression ADR-049)
+Updated by: Claude (assistant memory, placeholders, precise guards ADR-050)
 
 ## Current state
 
@@ -106,6 +106,7 @@ Nearly all have 0-2 stars, so none counts as proven; any borrowing needs a read-
 
 ## Session log (newest first)
 
+- 2026-10-31: ADR-050 on `fix/context-pii-guards` (from 5856879; not pushed, not merged): short assistant memory, contact placeholders before model prompts, precise idea guards, computed budget percentages, one-address recipient check in the channel. Not verified live: any real model or mailbox.
 - 2026-10-31: Review fixes on `feature/discovery-contacts` (ADR-049 amendment): bounce correlation requires a recorded Message-ID (recipient-only goes to review); the bounce reason is stored and must be acknowledged before an address is re-enabled (lift or re-confirm); stop and bounce matching is documented as not authenticated and forgeable.
 
 - 2026-10-31: Discovered vendors (ADR-049) on branch `feature/discovery-contacts` (not pushed, not merged): `ExternalBusiness` identity separate from seed vendors, contact extraction from a business's own pages with provenance, shortlist and search with explicit source coverage, user-confirmed addresses only, a do-not-contact list (matched stop requests, correlated permanent bounces, user), test vendors, a Find vendors UI. Found and fixed on the way: unmatched-sender stop requests could not be reviewed (they were dropped), a draft blocked by a suppression was silently skipped when a job was approved (now a job item). Not verified live: Places `websiteUri`, DSN parsing against a real mail server, any real fetch or send.
