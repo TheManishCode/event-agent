@@ -6,8 +6,11 @@ keeps every vendor name, and contains no markup or links. Anything else falls
 back to the deterministic text. Prompts are versioned Markdown under /prompts.
 
 Clients come from NVIDIA and/or OpenRouter (ADR-032): none is created unless a key is present in the
-environment (never in files) and EVENTMATE_ENABLE_LLM is not 0. The raw user request and guest names are never
-sent: only the already-verified plan summary.
+environment (never in files) and EVENTMATE_ENABLE_LLM is not 0.
+
+What each model stage is sent (see docs/MODEL_INPUTS.md): the explanation stage gets only the already-verified plan summary (no raw request,
+no guest names). Intake gets the user's message and the reviewed draft, with contact details replaced by placeholders. The assistant gets the question
+(placeholders for contact details), a short fenced conversation, and tool results. Ideas get eight fact fields. See each stage's masking there.
 """
 
 from __future__ import annotations
@@ -35,6 +38,17 @@ _NUMBER_WORDS = re.compile(
 )
 _MARKUP = re.compile(r"<[A-Za-z/!][^>]*>|```|\]\(|javascript:", re.I)
 _LINK = re.compile(r"https?://|www\.|\b[\w.-]+@[\w.-]+\.\w+", re.I)
+# The whole of each link, address and bare domain, for comparing against evidence. _LINK above only finds that one exists; matching on it alone treats
+# "https://other.example" as present whenever the evidence holds any "https://".
+_LINK_FULL = re.compile(
+    r"https?://[^\s<>\"')\]]+|www\.[^\s<>\"')\]]+|\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+"
+    r"|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|in|org|net|io|co|app|xyz|info|biz|shop|online|site|store|dev|ai|edu|gov)(?![\w-])(?:/[^\s<>\"')\]]*)?", re.I,
+)
+
+
+def links_in(text: str) -> set:
+    """Every link, email address and bare domain in the text, lower-cased and without trailing punctuation."""
+    return {m.group(0).rstrip(".,;:!?").lower() for m in _LINK_FULL.finditer(text or "")}
 
 
 class PromptError(Exception):
@@ -77,7 +91,7 @@ def guard_rewrite(output: str, source: str, names: Iterable[str]) -> Optional[st
         return "output length out of range"
     if _MARKUP.search(output):
         return "markup not allowed"
-    if _LINK.search(output) and not _LINK.search(source):
+    if (_LINK.search(output) and not _LINK.search(source)) or links_in(output) - links_in(source):
         return "link not allowed"
     allowed = set(_NUMBER.findall(source))
     extra = sorted(set(_NUMBER.findall(output)) - allowed)
@@ -142,7 +156,7 @@ METER = UsageMeter()
 
 
 def _post(url: str, headers: dict, data: bytes, timeout: float) -> bytes:
-    with urllib.request.urlopen(urllib.request.Request(url, data=data, headers=headers), timeout=timeout) as resp:
+    with urllib.request.urlopen(urllib.request.Request(url, data=data, headers=headers), timeout=timeout) as resp:  # nosec B310 - base_url must be https (checked in __init__)
         return read_capped(resp, MAX_REPLY_BYTES + 1)
 
 

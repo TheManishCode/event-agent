@@ -22,7 +22,10 @@
   <main class="layout">
     <aside class="rail" aria-label="Create and choose plans">
       <section class="card chat-card" id="chat-card">
-        <h2>Plan with EventMate</h2>
+        <div class="card-head">
+          <div class="mascot" id="mascot" aria-hidden="true"></div>
+          <div><h2>Plan with EventMate</h2><p class="muted">Tell me about your event. I check every detail against real records.</p></div>
+        </div>
         <div id="chat-log" class="chat-log" role="log" aria-live="polite" aria-label="Conversation"></div>
         <div id="review" class="review" hidden></div>
         <form id="chat-form" class="chat-form" autocomplete="off">
@@ -81,6 +84,12 @@
     </form>
   </dialog>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <footer class="credits">
+    Assistant avatar: <a href="https://sketchfab.com/3d-models/polytoria-avatar-v3-pauly-2c1fbaf2dec1411ca1ae5bfd0afaaa9e" target="_blank" rel="noopener noreferrer">Polytoria Avatar V3 “Pauly”</a>
+    by <a href="https://sketchfab.com/beachr267" target="_blank" rel="noopener noreferrer">dantheman</a>,
+    <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a>.
+    3D viewer: <a href="https://modelviewer.dev" target="_blank" rel="noopener noreferrer">model-viewer</a> by Google, Apache-2.0.
+  </footer>
   <script src="/static/app.js"></script>
 </body>
 </html>

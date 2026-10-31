@@ -1,0 +1,48 @@
+name: ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint-and-security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: pip install -e ".[dev]"
+      - run: make lint
+      - run: make security
+
+  tests:
+    # The planning tests need Fast Downward and VAL (docs/CONFIGURATION.md); they are built once and cached.
+    runs-on: ubuntu-latest
+    env:
+      EVENTMATE_FD: ${{ github.workspace }}/solvers/downward/fast-downward.py
+      EVENTMATE_VAL: ${{ github.workspace }}/solvers/VAL/build/bin/Validate
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/cache@v4
+        id: solvers
+        with:
+          path: solvers
+          key: solvers-fd-24.06.1-val-v1
+      - name: Build Fast Downward and VAL
+        if: steps.solvers.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update && sudo apt-get install -y cmake g++ make flex bison
+          mkdir -p solvers && cd solvers
+          git clone --depth 1 --branch release-24.06.1 https://github.com/aibasel/downward.git
+          (cd downward && ./build.py)
+          git clone --depth 1 https://github.com/KCL-Planning/VAL.git
+          (cd VAL && mkdir -p build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release && make -j"$(nproc)")
+      - run: pip install -e ".[dev]"
+      - run: python -m playwright install --with-deps chromium
+      - run: python -m pytest -q

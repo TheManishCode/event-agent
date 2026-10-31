@@ -16,7 +16,7 @@
     python -m eventmate discover CITY [--kind venue|hotel|restaurant] [--limit N] [--json]   # OpenStreetMap places: candidates only
     python -m eventmate multicity LEG LEG... [--json]   # LEG = ORIGIN,DEST,YYYY-MM-DD; built from separate one-way searches
     python -m eventmate outreach PLAN_ID CATEGORY {email|whatsapp} RECIPIENT --name NAME [--json]   # write a quote request and a link; you send it, nothing is sent
-    python -m eventmate jobs [show|start|approve|confirm|reject|resolve|nudge|cancel|tick] ...   # follow-through jobs; `python -m eventmate.worker --every 60` runs them
+    python -m eventmate jobs [show|start|approve|confirm|reject|resolve|nudge|cancel|tick] ...   # follow-through jobs; `python -m eventmate.followthrough.worker --every 60` runs them
     python -m eventmate inbox [show|poll|approve|deny|autoreply|kill|resume] [PLAN_ID] [DRAFT_ID --hash H] [--watch SECONDS]   # the agent sends what you approve and reads replies
     python -m eventmate quotes {show VENDOR_ID | compare CATEGORY | score CATEGORY} [--json]   # recorded vendor quotes (record them via the web API)
 
@@ -40,11 +40,11 @@ from eventmate.llm import client_from_env
 from eventmate.plan_store import PlanIntegrityError
 from eventmate.schemas import Disruption, DisruptionKind, VendorCategory
 from eventmate.service import EventMate
-from eventmate.discovery import DiscoveryError
-from eventmate.travel import TravelError, check_date
-from eventmate.weather import WeatherError
+from eventmate.integrations.discovery import DiscoveryError
+from eventmate.integrations.travel import TravelError, check_date
+from eventmate.integrations.weather import WeatherError
 
-COMMANDS = {"jobs", "inbox", "outreach", "plan", "confirm", "replan", "show", "diff", "validate", "list", "intake", "tradeoffs", "ledger", "quotes", "flights", "multicity", "discover", "weather", "deals"}
+COMMANDS = {"testvendor", "jobs", "inbox", "outreach", "plan", "confirm", "replan", "show", "diff", "validate", "list", "intake", "tradeoffs", "ledger", "quotes", "flights", "multicity", "discover", "weather", "deals"}
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -122,6 +122,13 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--max-total", type=int, default=10, help="autoreply: automatic messages per plan (1-30)")
     p.add_argument("--off", action="store_true", help="autoreply: revoke the permission")
     p.add_argument("--json", action="store_true")
+    p = sub.add_parser("testvendor", help="add a TEST VENDOR whose email address is yours, to a plan's shortlist (never a discovered business)")
+    p.add_argument("plan_id")
+    p.add_argument("category", choices=[c.value for c in VendorCategory])
+    p.add_argument("name")
+    p.add_argument("email")
+    p.add_argument("--by", required=True, help="your name, recorded as the owner of the address")
+    p.add_argument("--i-own-this-address", action="store_true", help="required: you confirm the address is yours")
     p = sub.add_parser("jobs", help="follow-through jobs: get N comparable quotes by a deadline; the worker sends what you approve, reads replies, nudges, and asks you")
     p.add_argument("what", choices=["show", "start", "approve", "confirm", "reject", "resolve", "nudge", "cancel", "tick"], nargs="?", default="show")
     p.add_argument("target", nargs="?", help="show/start: PLAN_ID; the others: JOB_ID")
@@ -248,6 +255,14 @@ def _run(em: EventMate, a) -> int:
         return _inbox(em, a)
     if a.command == "jobs":
         return _jobs(em, a)
+    if a.command == "testvendor":
+        if not a.i_own_this_address:
+            print("a test vendor needs --i-own-this-address: you confirm the address is yours", file=sys.stderr)
+            return 2
+        plan = em.store.latest(a.plan_id)
+        biz, contact = em.add_test_vendor(a.name, plan.request.city, VendorCategory(a.category), a.email, True, a.by, a.plan_id)
+        print(f"TEST VENDOR {biz.name} ({biz.vendor_id}) added to the shortlist; address {contact.email} confirmed as owned by {a.by}")
+        return 0
     if a.command in ("flights", "multicity"):
         return _travel(em, a)
     if a.command == "discover":
@@ -274,6 +289,9 @@ def _run(em: EventMate, a) -> int:
     if a.command == "validate":
         report = em.revalidate(a.plan_id, a.version)
         print(f"{'PASSED' if report.passed else 'FAILED'}: {sum(c.passed for c in report.checks)}/{len(report.checks)} checks")
+        if report.passed:
+            v = em.verification(a.plan_id, a.version)
+            print(("VERIFIED" if v["state"] == "verified" else "NEEDS VERIFICATION") + ": " + v["label"] + "".join(f"\n  - {i['detail']}. To resolve: {i['repair']}" for i in v["items"]))
         _print_violations(report.violations)
         return 0 if report.passed else 3
     for pid in em.store.list_plans():
@@ -351,7 +369,7 @@ def _travel(em: EventMate, a) -> int:
 
 def _deals(em: EventMate, a) -> int:
     from eventmate.schemas import DealQuery
-    from eventmate.websearch import SearchError
+    from eventmate.integrations.websearch import SearchError
 
     try:
         rep = em.find_deals(DealQuery(kind=a.kind, city=a.city, guests=a.guests, nights=a.nights, budget_inr=a.budget, limit=a.limit))
@@ -434,7 +452,7 @@ def _outreach(em: EventMate, a) -> int:
 def _jobs(em: EventMate, a) -> int:
     from datetime import datetime, timedelta, timezone
 
-    from eventmate.worker import digest
+    from eventmate.followthrough.worker import digest
 
     w = em.jobs
     if a.what == "tick":

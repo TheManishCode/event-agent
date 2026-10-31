@@ -62,7 +62,7 @@ class EventPolicy(_Model):
     def event_window(self, request) -> Tuple[int, int]:
         """(start hour, minutes) of the event. A community event reads it from its profile (data), every other type from ``event_defaults``."""
         if request.event_type == EventType.COMMUNITY:
-            from eventmate.community import profile_for
+            from eventmate.planning.community import profile_for
 
             prof = profile_for(request)
             return prof.start_hour, prof.minutes

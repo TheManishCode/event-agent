@@ -19,9 +19,7 @@
   "backoff_seconds": 0.2,
   "max_est_tokens_per_user_per_hour": 40000,
   "blocked_input_phrases": [
-    "system prompt",
-    "jailbreak",
-    "developer mode"
+    "jailbreak"
   ],
   "preset_reply": "I can help with questions about this event plan and how EventMate works. I can't help with that request.",
   "min_retrieval_score": 1.0

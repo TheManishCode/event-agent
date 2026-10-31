@@ -626,7 +626,8 @@ class RealityCheck(_Model):
     budget: int = Field(gt=0)
     floor: Optional[int] = Field(default=None, ge=0)
     per_category: Tuple[CategoryFloor, ...] = ()
-    suggested_minimum_budget: Optional[int] = Field(default=None, gt=0)
+    suggested_minimum_budget: Optional[int] = Field(default=None, gt=0)  # the least total that covers the cheapest set and the contingency reserve, if money can move between services
+    minimum_budget_default_split: Optional[int] = Field(default=None, gt=0)  # the least total at which every service's own share (its cap) covers its cheapest eligible vendor
     message: str
     basis: str
     source: str = "tool:reality_check"
@@ -817,6 +818,8 @@ class UnverifiedItem(_Model):
     name: str = Field(min_length=1, max_length=80)
     detail: str = Field(min_length=1, max_length=400)
     repair: str = Field(min_length=1, max_length=400)
+    label: str = Field(default="", max_length=120)  # short words for a badge or a sentence, e.g. "required accessibility unknown"
+    blocks_verified: bool = True  # True: the plan may be shown as a provisional plan but never as fully verified until this is resolved
 
 
 class ValidationReport(_Model):
@@ -833,6 +836,21 @@ class ValidationReport(_Model):
         if self.passed and self.violations:
             raise ValueError("a passing report cannot list violations")
         return self
+
+    def blocking_unverified(self) -> Tuple["UnverifiedItem", ...]:
+        return tuple(u for u in self.unverified if u.blocks_verified)
+
+    @property
+    def fully_verified(self) -> bool:
+        """Every hard check passed AND nothing that matters is still undecided. ``passed`` alone only says no check failed."""
+        return self.passed and not self.blocking_unverified()
+
+    def verification_label(self) -> str:
+        """"Verified", or "Needs verification: <what is unknown>". The one wording every surface uses."""
+        if not self.passed:
+            return "Failed"
+        blocking = self.blocking_unverified()
+        return "Verified" if not blocking else "Needs verification: " + "; ".join(u.label or u.name.replace("_", " ") for u in blocking)
 
 
 class PlanVersion(_Model):
@@ -1022,7 +1040,8 @@ class TradeoffOption(_Model):
     extra_spend: int = Field(ge=0)
     utility: float
     estimated_total: int = Field(ge=0)
-    verified: Literal[True] = True  # a full plan was built and validated (dry run, nothing stored)
+    verified: Literal[True] = True  # a full plan was built and every check that could be decided passed (dry run, nothing stored)
+    needs_verification: Tuple[str, ...] = ()  # what that plan would still leave undecided; empty means it would be fully verified
     source: str = "tool:tradeoff"
 
 
@@ -1319,6 +1338,7 @@ class VenueCandidate(_Model):
     city: Optional[str] = Field(default=None, max_length=80)
     website: Optional[str] = Field(default=None, max_length=300)
     capacity_tagged: Optional[int] = Field(default=None, ge=1, le=MAX_GUESTS)  # as tagged by an OSM contributor, unverified
+    email: Optional[str] = Field(default=None, max_length=254)  # as tagged by an OSM contributor (the listing's own field); a candidate until the user confirms it
     source: Literal["tool:overpass"] = "tool:overpass"
 
     @field_validator("name", "street", "city")
@@ -1331,6 +1351,13 @@ class VenueCandidate(_Model):
     def _site_ok(cls, v: Optional[str]) -> Optional[str]:
         if v is not None and (not re.fullmatch(r"https?://[^\s<>\"']+", v)):
             raise ValueError("website must be a plain http(s) URL")
+        return v
+
+    @field_validator("email")
+    @classmethod
+    def _email_ok(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not _EMAIL.fullmatch(v):
+            raise ValueError("not a valid email address")
         return v
 
 
@@ -1548,6 +1575,8 @@ class PlaceInfo(_Model):
     weighted_rating: Optional[float] = Field(default=None, ge=0.0, le=5.0)  # rating pulled toward the average when there are few reviews
     price_level: Optional[int] = Field(default=None, ge=1, le=4)  # 1 inexpensive ... 4 very expensive: a band, not a price
     maps_uri: Optional[str] = Field(default=None, max_length=500)
+    place_id: Optional[str] = Field(default=None, pattern=r"^[A-Za-z0-9_-]{8,200}$")
+    website: Optional[str] = Field(default=None, max_length=2048, pattern=r"^https?://[^\s\x00-\x1f\x7f<>\"']+$")  # the business's own site, when the listing publishes one
     reviews: Tuple[PlaceReview, ...] = Field(default=(), max_length=10)
 
     @field_validator("name", "address")
@@ -1629,8 +1658,9 @@ class WeatherAdvice(_Model):
 
 _EMAIL = re.compile(r"^[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(\.[A-Za-z0-9-]{1,63})*\.[A-Za-z]{2,24}$")
 _LINK = re.compile(r"^(mailto:[A-Za-z0-9._%+@-]+\?[^\s]*|https://wa\.me/[1-9][0-9]{7,14}\?text=[^\s]*)$")
-OutreachStatus = Literal["prepared", "approved", "sending", "sent", "failed", "outcome_unknown", "denied", "expired", "marked_sent"]
-OUTREACH_FINAL = frozenset({"sent", "failed", "outcome_unknown", "denied", "expired", "marked_sent"})
+OutreachStatus = Literal["prepared", "approved", "sending", "sent", "failed", "outcome_unknown", "denied", "expired", "marked_sent", "blocked"]
+OUTREACH_FINAL = frozenset({"sent", "failed", "outcome_unknown", "denied", "expired", "marked_sent", "blocked"})
+VendorOrigin = Literal["seed", "discovered", "test"]  # where a business came from; shown wherever it appears
 
 
 def draft_content_hash(d: Dict) -> str:
@@ -1649,6 +1679,7 @@ class OutreachDraft(_Model):
     category: VendorCategory
     vendor_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
     vendor_name: str = Field(min_length=1, max_length=120)
+    vendor_origin: VendorOrigin = "seed"
     channel: Literal["email", "whatsapp"]
     recipient: str = Field(max_length=254)  # an email address, or WhatsApp digits with the country code
     subject: str = Field(default="", max_length=200)  # email only
@@ -1711,13 +1742,18 @@ class OutreachDraft(_Model):
 
 
 class VendorContact(_Model):
-    """Where to reach a vendor. Typed by the user; vendor records hold no contact details."""
+    """Where to reach a vendor. For a seed vendor the user typed it. For an external business it is only ever created when the user confirmed it, and it keeps where it came from."""
 
     vendor_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
     email: Optional[str] = Field(default=None, max_length=254)
     whatsapp: Optional[str] = Field(default=None, pattern=r"^[1-9][0-9]{7,14}$")
     preferred: Literal["email", "whatsapp"] = "whatsapp"
     updated_at: datetime
+    origin: VendorOrigin = "seed"
+    source_url: Optional[str] = Field(default=None, max_length=2048, pattern=r"^https?://[^\s\x00-\x1f\x7f]+$")  # the public page or listing the address was read from
+    confirmed_by: Optional[str] = Field(default=None, min_length=1, max_length=60)
+    confirmed_at: Optional[datetime] = None
+    edited_by_user: bool = False  # the user typed a different address than the one that was found
 
     @model_validator(mode="after")
     def _ok(self) -> "VendorContact":
@@ -1755,6 +1791,7 @@ class InboundMessage(_Model):
     draft_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")  # the request this answers
     vendor_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
     vendor_name: str = Field(min_length=1, max_length=120)
+    vendor_origin: VendorOrigin = "seed"
     category: VendorCategory
     channel: Literal["email", "whatsapp"]
     sender: str = Field(max_length=254)
@@ -1885,6 +1922,12 @@ class Idea(_Model):
     fields_used: Tuple[IdeaField, ...] = Field(min_length=1, max_length=8)
     status: Literal["suggestion"] = "suggestion"
     source: str = Field(pattern=r"^(llm:[A-Za-z0-9_.-]{1,60}|rule:idea_templates)$")
+    review_note: str = Field(default="", max_length=240)  # "Organiser to check ...": shown with the idea; the idea is kept, not dropped
+
+    @field_validator("review_note")
+    @classmethod
+    def _note_ok(cls, v: str) -> str:
+        return _clean_text(v)
 
     @field_validator("title", "why", "est_cost_note")
     @classmethod
@@ -2086,4 +2129,173 @@ class NotifyLogEntry(_Model):
     digest_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
     job_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
     scope: Dict[str, bool] = {}
+
+
+# ------------------------------------------------- external businesses (ADR-049)
+# A business found by discovery is NOT a vendor record (ADR-028). It has its own identity, is never merged with or renamed to a seed vendor,
+# and carries where it came from. Ids never collide: external vendor ids start with "ext_", seed ids never do.
+
+EXTERNAL_PREFIX = "ext_"
+_EXT_ID = r"^ext_[0-9a-f]{24}$"
+_EXTERNAL_REF = r"^(osm:(node|way|relation)/[0-9]{1,15}|gplaces:[A-Za-z0-9_-]{8,200}|test:[a-z0-9_-]{1,40})$"
+
+
+def external_vendor_id(external_id: str) -> str:
+    """A path-safe id derived from the source reference, e.g. osm:node/123 or gplaces:<place id>."""
+    import hashlib
+
+    return EXTERNAL_PREFIX + hashlib.sha256(external_id.encode("utf-8")).hexdigest()[:24]
+
+
+class VendorRef(_Model):
+    """The one explicit way to point at a vendor: a seed record, or an external business. Lookups apply the vendor database only to ``seed``."""
+
+    kind: Literal["seed", "external"]
+    id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+
+    @model_validator(mode="after")
+    def _kind_matches_id(self) -> "VendorRef":
+        if (self.kind == "external") != self.id.startswith(EXTERNAL_PREFIX):
+            raise ValueError("external ids start with 'ext_' and seed ids never do")
+        return self
+
+    @classmethod
+    def of(cls, vendor_id: str) -> "VendorRef":
+        return cls(kind="external" if vendor_id.startswith(EXTERNAL_PREFIX) else "seed", id=vendor_id)
+
+
+class ExternalBusiness(_Model):
+    vendor_id: str = Field(pattern=_EXT_ID)
+    external_id: str = Field(pattern=_EXTERNAL_REF)
+    name: str = Field(min_length=1, max_length=120)
+    city: str = Field(min_length=1, max_length=80)
+    category: VendorCategory
+    source: Literal["osm", "gplaces", "test"]
+    source_url: Optional[str] = Field(default=None, max_length=2048, pattern=r"^https?://[^\s\x00-\x1f\x7f]+$")
+    website: Optional[str] = Field(default=None, max_length=2048, pattern=r"^https?://[^\s\x00-\x1f\x7f<>\"']+$")
+    website_source: Literal["listing", "user_input"] = "listing"
+    rating: Optional[float] = Field(default=None, ge=0.0, le=5.0)  # only when a source published it
+    is_test: bool = False
+    origin: Literal["discovered", "test"] = "discovered"  # shown wherever the business appears; derived from the source, never chosen by a caller
+    owner_confirmed_by: Optional[str] = Field(default=None, min_length=1, max_length=60)  # a test vendor's address must be owned by this person
+    created_at: datetime
+
+    @field_validator("name", "city", "owner_confirmed_by")
+    @classmethod
+    def _text_ok(cls, v: Optional[str]) -> Optional[str]:
+        return v if v is None else _clean_text(v.strip())
+
+    @model_validator(mode="after")
+    def _consistent(self) -> "ExternalBusiness":
+        if self.vendor_id != external_vendor_id(self.external_id):
+            raise ValueError("vendor_id does not match external_id")
+        if self.is_test != (self.source == "test") or self.is_test != self.external_id.startswith("test:") or self.origin != ("test" if self.is_test else "discovered"):
+            raise ValueError("only a business created as a test vendor can be a test vendor, and a discovered one never is")
+        if self.is_test and not self.owner_confirmed_by:
+            raise ValueError("a test vendor needs the owner's confirmation that the address is theirs")
+        return self
+
+
+class ContactCandidate(_Model):
+    """An address software found. It is never used until the user confirms it for that business, and it never exists without the page or listing it came from."""
+
+    candidate_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    vendor_id: str = Field(pattern=_EXT_ID)
+    channel: Literal["email", "whatsapp"]
+    value: str = Field(min_length=3, max_length=254)
+    source_url: str = Field(min_length=8, max_length=2048, pattern=r"^https?://[^\s\x00-\x1f\x7f]+$")
+    source_kind: Literal["listing_field", "page_mailto", "page_text"]
+    flags: Tuple[str, ...] = Field(default=(), max_length=6)
+    found_at: datetime
+    status: Literal["found", "confirmed", "rejected"] = "found"
+    confirmed_by: Optional[str] = Field(default=None, min_length=1, max_length=60)
+    confirmed_at: Optional[datetime] = None
+    confirmed_value: Optional[str] = Field(default=None, max_length=254)  # what the user confirmed, if they edited the found address
+
+    @model_validator(mode="after")
+    def _ok(self) -> "ContactCandidate":
+        if self.channel == "email" and not _EMAIL.fullmatch(self.value):
+            raise ValueError("not a valid email address")
+        if self.channel == "whatsapp" and not re.fullmatch(r"[1-9][0-9]{7,14}", self.value):
+            raise ValueError("not a valid WhatsApp number")
+        if (self.status == "confirmed") != (self.confirmed_by is not None and self.confirmed_at is not None):
+            raise ValueError("a confirmed candidate records who confirmed it and when; others record neither")
+        return self
+
+
+class ShortlistEntry(_Model):
+    plan_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    category: VendorCategory
+    vendor_id: str = Field(pattern=_EXT_ID)
+    added_at: datetime
+
+
+class Suppression(_Model):
+    """Do not contact this address (channel and normalised value), on any plan, in any job. Only the user can lift it."""
+
+    suppression_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    channel: Literal["email", "whatsapp"]
+    value: str = Field(min_length=3, max_length=254)  # normalised
+    reason: Literal["stop_request", "user", "bad_address"]
+    source_ref: str = Field(default="", max_length=400)  # the matched message id, or what the user said
+    detail: str = Field(default="", max_length=300)  # for a bad address: the failure status and the remote server's own words (untrusted, shown as such)
+    created_at: datetime
+    created_by: str = Field(min_length=1, max_length=80)
+    lifted_at: Optional[datetime] = None
+    lifted_by: Optional[str] = Field(default=None, max_length=80)
+    lift_reason: str = Field(default="", max_length=200)
+
+    @model_validator(mode="after")
+    def _lift_is_recorded(self) -> "Suppression":
+        if (self.lifted_at is None) != (self.lifted_by is None) or (self.lifted_at is not None and not self.lift_reason.strip()):
+            raise ValueError("lifting a suppression records who, when and why")
+        return self
+
+    @property
+    def active(self) -> bool:
+        return self.lifted_at is None
+
+
+class UnmatchedMessage(_Model):
+    """Mail that is not tied to anything we sent but looks like a stop request or a bounce. It changes nothing; the user decides."""
+
+    message_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    channel: Literal["email", "whatsapp"]
+    sender: str = Field(max_length=254)
+    received_at: datetime
+    external_id: str = Field(min_length=1, max_length=400)
+    kind: Literal["stop_like", "bounce"]
+    body: str = Field(max_length=1000)
+    reviewed: bool = False
+
+    @field_validator("sender", "body")
+    @classmethod
+    def _text_ok(cls, v: str) -> str:
+        return "".join(ch for ch in v if ch in "\n\t" or unicodedata.category(ch) != "Cc")
+
+
+class ShortlistItem(_Model):
+    """One shortlisted business as the user sees it: where it came from, the addresses found for it, and the confirmed one if any."""
+
+    category: VendorCategory
+    business: ExternalBusiness
+    candidates: Tuple[ContactCandidate, ...] = ()
+    contact: Optional[VendorContact] = None  # present only after the user confirmed an address
+    blocked: Optional[str] = None  # why it cannot be contacted: "do not contact" or a bad address
+
+
+class SearchOutcome(_Model):
+    source: Literal["osm", "places"]
+    category: VendorCategory
+    city: str
+    added: int = Field(ge=0)
+    total: int = Field(ge=0)
+    warnings: Tuple[str, ...] = ()
+
+
+class ContactFindResult(_Model):
+    vendor_id: str
+    added: Tuple[ContactCandidate, ...] = ()
+    pages: Tuple[str, ...] = ()
+    notes: Tuple[str, ...] = ()
 

@@ -1,8 +1,8 @@
 """Guardrails that wrap the model: injection scan, PII masking, data fencing and an output fact check.
 
 None of these is the main defence. The main defence is that the model has no authority (tools are permission
-checked, mutations are proposals). These make attacks visible, keep personal data out of logs and prompts, and
-stop an answer from stating facts that no tool or document supplied.
+checked, mutations are proposals). These make attacks visible, mask personal data in logs, tool results and (via placeholders, eventmate/privacy.py)
+in what is sent to a model, and stop an answer from stating facts that no tool or document supplied.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from typing import Iterable, List, Optional
 
-from eventmate.llm import _LINK, _MARKUP, _NUMBER, _NUMBER_WORDS
+from eventmate.llm import _MARKUP, _NUMBER, _NUMBER_WORDS, links_in
 
 _INJECTION = {
     "override_instructions": re.compile(r"\b(?:ignore|disregard|forget|override)\b[^.\n]{0,40}\b(?:instructions?|rules?|prompt|guidelines?)\b", re.I),
@@ -72,7 +72,7 @@ def check_answer(answer: str, evidence: str, question: str = "", extra_ok: Itera
     if _MARKUP.search(answer):
         return "markup not allowed"
     source = evidence + " " + question + " " + " ".join(extra_ok)
-    if _LINK.search(answer) and not set(m.lower() for m in _LINK.findall(answer)) <= set(m.lower() for m in _LINK.findall(source)):
+    if links_in(answer) - links_in(source):
         return "link or address not in the evidence"
     flat = lambda s: {n.replace(",", "") for n in _NUMBER.findall(s)}  # noqa: E731  ("1,20,000" and "120000" are one fact)
     extra = sorted(flat(answer) - flat(source))

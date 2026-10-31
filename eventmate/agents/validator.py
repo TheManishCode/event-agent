@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Iterable, List, Optional, Tuple
 
-from eventmate import community
+from eventmate.planning import community
 from eventmate.agents.budget import BudgetPolicy, compute_allocation
 from eventmate.agents.guest import GuestAgent
 from eventmate.agents.scheduler import DAY, EventPolicy

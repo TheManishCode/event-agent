@@ -5,7 +5,7 @@
 ## Plan (you run this, not the test suite)
 Use a dedicated mailbox and recipients you own or who agreed. No real vendors.
 
-1. `python -m eventmate.smoke_email` : expect PASS smtp and PASS imap.
+1. `python -m eventmate.messaging.smoke_email` : expect PASS smtp and PASS imap.
 2. Start a job for one vendor whose contact is a second address you own; approve the request; confirm one email arrives at that address.
 3. Reply manually from that address with a price such as "Total INR 50,000 for the event."
 4. Run `python -m eventmate jobs tick` (or wait for the loop). Confirm: the reply is matched to the right thread, a claim is proposed, no quote is recorded until you confirm, and nothing is sent automatically unless a standing permission is on.

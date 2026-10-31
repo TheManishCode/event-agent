@@ -15,16 +15,16 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Callable, List, Optional
 
-from eventmate.discovery import DiscoveryError
+from eventmate.integrations.discovery import DiscoveryError
 from eventmate.env import load_env
-from eventmate.explore import route
+from eventmate.integrations.explore import route
 from eventmate.llm import METER
-from eventmate.places import PlacesNotConfigured
+from eventmate.integrations.places import PlacesNotConfigured
 from eventmate.schemas import DealQuery, TripRequest, TripStop
 from eventmate.service import EventMate
-from eventmate.travel import TravelError
-from eventmate.weather import WeatherNotConfigured
-from eventmate.websearch import SearchError
+from eventmate.integrations.travel import TravelError
+from eventmate.integrations.weather import WeatherNotConfigured
+from eventmate.integrations.websearch import SearchError
 
 
 @dataclass

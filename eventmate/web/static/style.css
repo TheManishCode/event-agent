@@ -51,6 +51,11 @@ textarea.input { resize: vertical; min-height: 120px; }
 .plan-item:hover, .plan-item[aria-current="true"] { border-color: var(--accent); }
 .plan-item b { display: block; } .plan-item span { font-size: 12.5px; color: var(--muted); }
 
+.card-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; } .card-head h2 { margin: 0; } .card-head p { margin: 2px 0 0; font-size: 13px; }
+.mascot { flex: none; width: 92px; height: 104px; border-radius: 22px; overflow: hidden; background: radial-gradient(circle at 50% 35%, color-mix(in srgb, var(--accent) 38%, transparent), color-mix(in srgb, var(--accent2) 14%, transparent) 70%), var(--bg2); border: 1px solid var(--line); }
+.mascot model-viewer { display: block; width: 100%; height: 100%; --poster-color: transparent; background: transparent; outline: none; }
+.credits { max-width: 1200px; margin: 28px auto 20px; padding: 0 24px; font-size: 12px; color: var(--muted); text-align: center; } .credits a { color: inherit; text-decoration: underline; }
+@media (prefers-reduced-motion: reduce) { .mascot { transition: none; } }
 .empty { text-align: center; padding: 90px 20px; max-width: 620px; margin: 0 auto; } .empty h1 { font-size: 34px; margin: 18px 0 10px; } .empty p { color: var(--muted); font-size: 16px; }
 .hero { display: grid; gap: 14px; margin-bottom: 14px; }
 .hero-top { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; align-items: flex-start; }

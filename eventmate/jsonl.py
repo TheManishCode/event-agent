@@ -8,6 +8,8 @@ owner-only (0600), symlinks are refused, and writes are serialised.
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import os
 import re
 import threading
@@ -59,3 +61,36 @@ class JsonlLog(Generic[M]):
             return []
         with open(self.path, "r", encoding="utf-8") as fh:
             return [self.model.model_validate_json(line) for line in fh if line.strip()]
+
+
+class InterProcessLock:
+    """An exclusive lock for read-check-write steps over a JSONL store: a thread lock plus a file lock, so two processes cannot interleave.
+    Re-entrant within one thread."""
+
+    def __init__(self, path: Path):
+        self.path = Path(path)
+        self._thread = threading.RLock()
+        self._depth = 0
+
+    @contextlib.contextmanager
+    def __call__(self):
+        with self._thread:
+            if self._depth:
+                self._depth += 1
+                try:
+                    yield
+                finally:
+                    self._depth -= 1
+                return
+            self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            fd = os.open(self.path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                self._depth = 1
+                try:
+                    yield
+                finally:
+                    self._depth = 0
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+            finally:
+                os.close(fd)

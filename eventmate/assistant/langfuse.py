@@ -128,6 +128,6 @@ class LangfuseExporter:
     @staticmethod
     def _http(url: str, data: bytes, headers: Dict[str, str]) -> None:
         req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:  # noqa: S310  (scheme checked in __init__)
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:  # nosec B310 - https checked in __init__
             if resp.status >= 300:
                 raise urllib.error.HTTPError(url, resp.status, "ingestion refused", resp.headers, None)

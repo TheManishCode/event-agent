@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from eventmate.assistant.approvals import ApprovalError, ApprovalQueue, Proposal
 from eventmate.assistant.identity import Perm, Principal
 from eventmate.assistant.knowledge import KnowledgeBase
-from eventmate.reality import reality_check
+from eventmate.pricing.reality import reality_check
 from eventmate.schemas import Disruption, LedgerKind, VendorCategory
 from eventmate.service import EventMate
 
@@ -109,6 +109,7 @@ def _summary(ctx: ToolContext, _):
         "dietary": [d.value for d in r.dietary],
         "vendors": [{"category": s.category.value, "name": s.name, "booking_status": s.booking_status.value} for s in p.selections],
         "warnings": list(p.warnings),
+        "verification": ctx.em.verification(ctx.plan_id),  # the assistant must not call a plan fully verified when this says it needs verification
     }
 
 
@@ -125,7 +126,11 @@ def _alternatives(ctx: ToolContext, a: CategoryArgs):
 def _budget(ctx: ToolContext, _):
     p = ctx.em.store.latest(ctx.plan_id)
     s = ctx.em.ledger_summary(ctx.plan_id)
-    return {"budget_total": s.budget_total, "planned_total": s.planned_total, "quoted_total": s.quoted_total, "committed_total": s.committed_total,
+    pct = round(100 * s.planned_total / s.budget_total) if s.budget_total else 0
+    remaining = s.budget_total - s.planned_total
+    return {"budget_total": s.budget_total, "planned_total": s.planned_total, "planned_percent_of_budget": pct, "remaining_after_planned": remaining,
+            "derivation": f"planned {s.planned_total} / budget {s.budget_total} = {pct} percent; budget {s.budget_total} - planned {s.planned_total} = {remaining} (computed by EventMate, not by the model)",
+            "quoted_total": s.quoted_total, "committed_total": s.committed_total,
             "paid_total": s.paid_total, "pending_total": s.pending_total, "headroom": s.headroom, "plan_version": p.version,
             "vendors": [{"category": x.category.value, "name": x.name, "cost": x.cost} for x in p.selections]}
 
@@ -133,7 +138,7 @@ def _budget(ctx: ToolContext, _):
 def _reality(ctx: ToolContext, _):
     p = ctx.em.store.latest(ctx.plan_id)
     rc = reality_check(p.request, ctx.em.repo, ctx.em.manager.budget.policy)
-    return {"verdict": rc.verdict, "message": rc.message, "basis": rc.basis, "floor": rc.floor, "suggested_minimum_budget": rc.suggested_minimum_budget}
+    return {"verdict": rc.verdict, "message": rc.message, "basis": rc.basis, "floor": rc.floor, "suggested_minimum_budget": rc.suggested_minimum_budget, "minimum_budget_default_split": rc.minimum_budget_default_split}
 
 
 # ------------------------------------------------------------ mutating tools
