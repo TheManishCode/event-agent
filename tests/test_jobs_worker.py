@@ -605,3 +605,80 @@ def test_cancelling_after_approval_does_not_unsend_what_already_went_out(em, w, 
     sent = len(chan.sent)
     w.cancel(job.job_id)
     assert sent == 3 and {d.status for d in em.outreach_store.list(pid)} == {"sent"}
+
+
+# ---- guards that mutation testing showed nothing pinned (audit)
+
+def test_a_discovered_business_without_a_confirmed_address_cannot_start_a_job(em, w, pid, clock):
+    em.outreach_store.set_contact("ext_abc123", "owner@shop.test", None, "email")  # saved by a path that did not record a confirmation
+    with pytest.raises(ValueError, match="not confirmed by you"):
+        w.start_job(pid, C.CATERER, ["ext_abc123"], "1 quote", clock() + timedelta(days=7), "Asha", min_quotes=1)
+    assert em.outreach(pid) == []
+
+
+def test_a_deadline_equal_to_now_is_refused_and_one_second_later_is_allowed(w, pid, clock):
+    with pytest.raises(ValueError, match="in the future"):
+        start(w, pid, clock, deadline=clock())
+    assert start(w, pid, clock, deadline=clock() + timedelta(seconds=1))
+
+
+def test_approving_when_the_deadline_is_exactly_now_is_refused(w, pid, clock, chan):
+    job = start(w, pid, clock, deadline=clock() + timedelta(hours=1))
+    clock.advance(hours=1)
+    with pytest.raises(ValueError, match="deadline"):
+        w.approve_requests(job.job_id)
+    assert chan.sent == []
+
+
+def test_resolving_or_approving_something_that_does_not_exist_fails_and_changes_nothing(w, pid, clock):
+    job = start(w, pid, clock)
+    with pytest.raises(ValueError, match="no such item"):
+        w.resolve_item(job.job_id, "nope")
+    with pytest.raises(ValueError, match="no such open nudge"):
+        w.approve_nudge(job.job_id, job.items[0].item_id)  # a real item, but not a nudge
+    with pytest.raises(ValueError, match="no such open claim"):
+        w.confirm_claim(job.job_id, "nope", 10)
+    assert w.store.get(job.job_id).version == job.version
+
+
+@pytest.mark.parametrize("days,ok", [(1, True), (90, True), (0, False), (91, False), (True, False), ("5", False)])
+def test_the_validity_the_user_chooses_is_bounded(w, pid, clock, days, ok):
+    job = start(w, pid, clock)
+    if ok:
+        with pytest.raises(ValueError, match="no such open claim"):  # accepted the number, then found no claim
+            w.confirm_claim(job.job_id, "x", days)
+    else:
+        with pytest.raises(ValueError, match="how many days"):
+            w.confirm_claim(job.job_id, "x", days)
+
+
+def test_a_nudge_is_due_exactly_at_the_reply_window_and_not_a_second_before(w, pid, chan, clock):
+    job = start(w, pid, clock)
+    w.approve_requests(job.job_id)
+    w.tick()
+    clock.advance(hours=24, seconds=-1)
+    w.tick()
+    assert not [i for i in w.store.get(job.job_id).open_items() if i.kind == "approve_nudge"]
+    clock.advance(seconds=1)
+    w.tick()
+    assert len([i for i in w.store.get(job.job_id).open_items() if i.kind == "approve_nudge"]) == 3
+
+
+def test_a_vendor_the_user_marked_do_not_contact_becomes_an_item_not_a_silent_skip(em, w, pid, chan, clock):
+    job = start(w, pid, clock)
+    em.suppressions.add("email", "a@annapurna.test", "user", "", "you")
+    w.approve_requests(job.job_id)
+    w.tick()
+    kinds = [i.kind for i in w.store.get(job.job_id).open_items()]
+    assert "do_not_contact" in kinds and [r[0] for r in chan.sent] == ["r@rasoi.test", "s@spice.test"]  # the other two still went out
+
+
+def test_too_few_reachable_vendors_is_reported_once(w, pid, chan, clock):
+    job = start(w, pid, clock)
+    w.approve_requests(job.job_id)
+    for r in ("a@annapurna.test", "r@rasoi.test"):
+        reply(chan, r, "Sorry, we are not available on that date.", clock, f"<n-{r}>")
+    w.tick()
+    w.tick()
+    items = [i for i in w.store.get(job.job_id).items if i.kind == "no_quotes_possible"]
+    assert len(items) == 1 and "Only 1 vendor(s)" in items[0].text

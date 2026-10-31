@@ -98,7 +98,10 @@ class JobWorker:
         for p in job.vendors.values():
             d = self.em.outreach_store.get(job.plan_id, p.draft_id)
             if d is not None and d.status == "prepared":
-                self.em.approve_outreach(job.plan_id, d.draft_id, d.content_hash)
+                try:
+                    self.em.approve_outreach(job.plan_id, d.draft_id, d.content_hash)
+                except ValueError:
+                    continue  # blocked (do not contact), expired or channel not set up: that draft keeps its own status and the next tick tells the user; the others still go
         items = tuple(i.model_copy(update={"resolved": True}) if i.kind == "approve_requests" else i for i in job.items)
         return self._persist(job.model_copy(update={"items": items, "wake_at": self.now(), "status": "active", "next_action": "sending approved requests"}), "user", "requests_approved", self.now())
 
