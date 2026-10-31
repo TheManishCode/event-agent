@@ -209,6 +209,23 @@ def test_per_vendor_and_daily_limits(em, pid, chans, clock):
     assert em.outreach(pid)[-1].status == "approved" and "daily limit" in em.poll_conversations().waiting[0]
 
 
+@pytest.mark.parametrize("held", ["sending", "outcome_unknown"])
+def test_a_message_another_process_is_sending_or_whose_outcome_is_unknown_counts_against_the_limits(em, pid, chans, clock, held):
+    """Audit finding: only status "sent" counted, so two dispatchers (or a send that may have gone out) could exceed the caps."""
+    em.conversations.policy = SendPolicy(per_vendor_per_day=1, per_day=30, whatsapp_gap_s=0)
+    first = draft(em, pid)
+    em.outreach_store.transition(pid, first.draft_id, ("prepared",), status="approved", decided_at=clock())
+    em.outreach_store.transition(pid, first.draft_id, ("approved",), status="sending", decided_at=clock())
+    if held == "outcome_unknown":
+        em.outreach_store.transition(pid, first.draft_id, ("sending",), status="outcome_unknown", error="unclear")
+    second = draft(em, pid)
+    em.approve_outreach(pid, second.draft_id, second.content_hash)
+    assert [x.status for x in em.outreach(pid)] == [held, "approved"] and chans["email"].sent == []
+    clock.advance(hours=25)
+    em.conversations.dispatch()
+    assert em.outreach(pid)[-1].status == "sent"
+
+
 # ---- replies
 
 def sent(em, pid, channel="email", recipient="sales@annapurna.in", **kw):

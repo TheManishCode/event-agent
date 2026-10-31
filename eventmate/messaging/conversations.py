@@ -144,7 +144,14 @@ class ConversationService:
     # ------------------------------------------------------------ sending
 
     def _sent_since(self, since: datetime) -> List[OutreachDraft]:
-        return [d for pid in self.store.plan_ids() for d in self.store.list(pid) if d.status == "sent" and d.sent_at is not None and d.sent_at >= since]
+        """Messages that count against the limits: sent ones, ones another process is sending right now, and ones whose outcome is unknown (they may well have gone out)."""
+        out = []
+        for pid in self.store.plan_ids():
+            for d in self.store.list(pid):
+                when = d.sent_at if d.status == "sent" else d.decided_at if d.status in ("sending", "outcome_unknown") else None
+                if when is not None and when >= since:
+                    out.append(d)
+        return out
 
     def dispatch(self) -> Tuple[int, List[str]]:
         """Send what the user approved, within the limits. Returns (sent, reasons something is still waiting)."""
