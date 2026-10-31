@@ -30,3 +30,10 @@ Found by running it in a real browser against the strict policy, then loosened a
 - Still absent: `unsafe-inline`, `unsafe-eval`, `worker-src`, any `http:`/`https:` source. A test pins all of this.
 
 To update either file: replace it, update the hash above, and re-run `tests/test_web.py` and `tests/test_ui_e2e.py`.
+
+## The /arcade page (`cabinet.glb`, `three.min.js` and the loaders)
+
+- `cabinet.glb`: "Game-ready arcade machine" by Snji (https://sketchfab.com/snji_), https://sketchfab.com/3d-models/game-ready-arcade-machine-25fb590707034cff8b555953d66a0f7b, CC BY 4.0 (the file's own metadata says so). The patch's notes say the original artwork was replaced with EventMate's own art; that is the patch author's change and was not independently checked beyond the file's licence metadata. SHA-256: `c62e9108e9ee1af4835af895045d0e80a593411fd11e11d43e0d6f4832574a0c`
+- The attendant on that page is the same Pauly model as the chat avatar (`avatar.glb`, credited above); the patch shipped a byte-identical copy as `character.glb`, which was removed.
+- `three.min.js` (three.js r128, MIT, licence in `three.min.LICENSE.txt`) with the standard EffectComposer, bloom and GLTFLoader add-ons. SHA-256 of `three.min.js`: `9274bbcec8d96168626c732b5d31c775aa8cfb7eaa0599bec0c175908a2c1ce2`
+- Credit is shown at the bottom of the `/arcade` page and in `docs/ARCADE_UI.md`.

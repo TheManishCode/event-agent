@@ -14,6 +14,7 @@ from __future__ import annotations
 from itertools import product
 from typing import Dict, List, Optional, Sequence, Tuple
 
+from eventmate.arcade_pulse import pulse as _arcade_pulse
 from eventmate.agents.scheduler import SchedulingAgent
 from eventmate.cpsat import solve_schedule
 from eventmate.logs import RunLogs
@@ -84,16 +85,20 @@ class PlannerAgent:
             self._fail(request, "No eligible vendor for " + ", ".join(c.value for c in gaps), vs)
             return PlanningResult(violations=tuple(vs))
 
+        _arcade_pulse.stage_started("select")
         chosen = self._select(request, allocation, categories, by_cat, forced)
         if isinstance(chosen, list):
             self._fail(request, "No affordable vendor combination", chosen)
             return PlanningResult(violations=tuple(chosen))
         selections, warnings = chosen
+        _arcade_pulse.stage_done("select")
 
         fixed = dict(fixed_starts or {})
         already_done = tuple(sorted(BOOKING_TASK[s.category] for s in selections if s.booking_status == BookingStatus.CONFIRMED))
+        _arcade_pulse.stage_started("schedule")
         spec = self.scheduler.build_spec(request, categories, origin, fixed, now_offset)
         solution = solve_schedule(spec, tool_log=self.logs.tool_calls, request_id=request.request_id)
+        _arcade_pulse.stage_done("schedule")
         if solution.status not in ("optimal", "feasible"):
             vs = self.scheduler.explain_infeasibility(solution, request, categories, origin, fixed, now_offset) if solution.status == "infeasible" else [
                 ConstraintViolation(constraint="schedule_solver", detail=solution.detail, repair="retry; if it persists reduce the number of tasks")
@@ -101,7 +106,9 @@ class PlannerAgent:
             self._fail(request, f"Schedule solver returned {solution.status}", vs)
             return PlanningResult(violations=tuple(vs))
         items = self.scheduler.to_items(spec, solution, origin)
+        _arcade_pulse.stage_started("symbolic")
         symbolic = self.symbolic.check(spec, already_done, tool_log=self.logs.tool_calls, request_id=request.request_id)
+        _arcade_pulse.stage_done("symbolic")
         self.logs.decisions.log(
             request_id=request.request_id,
             agent=self.agent_name,

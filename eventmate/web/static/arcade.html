@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EventMate — Arcade</title>
+<link rel="stylesheet" href="/static/arcade.css">
+<link rel="icon" href="/static/favicon.svg">
+</head>
+<body>
+
+<!-- ======================= the dark arcade (3D layer) ======================= -->
+<canvas id="gl" aria-hidden="true"></canvas>
+<div id="gl-fallback" hidden>
+  <p>The 3D floor needs WebGL, which this browser refused. The engine is unchanged —
+  the classic interface at <a href="/">/</a> runs the same verified pipeline.</p>
+</div>
+
+<div id="replay-banner" hidden>REPLAY — the run already finished · re-lighting its recorded timings, slowed for display</div>
+<div id="stage-caption"></div>
+
+<!-- ======================= normal chat (foreground layer) ======================= -->
+<main id="chat">
+  <header>
+    <h1>EVENTMATE<span class="dot">·</span>ARCADE</h1>
+    <div class="head-right">
+      <div id="conn" title="server">…</div>
+      <button id="sound-toggle" type="button" title="machine sounds on/off">SOUND ON</button>
+      <button id="chat-toggle" type="button" title="hide the chat to see the whole machine">HIDE</button>
+    </div>
+  </header>
+  <div id="log" aria-live="polite"></div>
+
+  <section id="review" hidden>
+    <h2>READY TO BUILD — check the brief</h2>
+    <dl id="review-fields"></dl>
+    <button id="build" type="button">
+      <span class="coin-icon"></span>BUILD&nbsp;MY&nbsp;PLAN
+    </button>
+    <p class="review-note">The coin drops only when you press this. Nothing is planned before you confirm.</p>
+  </section>
+
+  <form id="composer" autocomplete="off">
+    <input id="msg" maxlength="2000" placeholder="Describe your event… (guests, city, date, budget)"
+           aria-label="Describe your event">
+    <button type="submit">SEND</button>
+  </form>
+  <p id="hint">Verified-planning engine behind the glass · nothing is booked, sent or paid</p>
+</main>
+
+<!-- ======================= result layer ======================= -->
+<div id="flight-layer" hidden>
+  <article id="paper" class="paper">
+    <div class="paper-inner" id="paper-inner"></div>
+    <div class="glass-shine"></div>
+  </article>
+</div>
+
+<div id="film" aria-hidden="true"></div>
+<script src="/static/three.min.js"></script>
+<script src="/static/CopyShader.js"></script>
+<script src="/static/LuminosityHighPassShader.js"></script>
+<script src="/static/EffectComposer.js"></script>
+<script src="/static/RenderPass.js"></script>
+<script src="/static/ShaderPass.js"></script>
+<script src="/static/MaskPass.js"></script>
+<script src="/static/UnrealBloomPass.js"></script>
+<script src="/static/GLTFLoader.js"></script>
+<script src="/static/arcade3d.js"></script>
+<script src="/static/arcade.js"></script>
+  <footer class="arcade-credits">Cabinet model: <a href="https://sketchfab.com/3d-models/game-ready-arcade-machine-25fb590707034cff8b555953d66a0f7b" target="_blank" rel="noopener noreferrer">Game-ready arcade machine</a> by <a href="https://sketchfab.com/snji_" target="_blank" rel="noopener noreferrer">Snji</a>; attendant: <a href="https://sketchfab.com/3d-models/polytoria-avatar-v3-pauly-2c1fbaf2dec1411ca1ae5bfd0afaaa9e" target="_blank" rel="noopener noreferrer">Polytoria Avatar V3 Pauly</a> by <a href="https://sketchfab.com/beachr267" target="_blank" rel="noopener noreferrer">dantheman</a>; both <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a>. Cabinet artwork is EventMate's own. 3D library: three.js, MIT.</footer>
+</body>
+</html>

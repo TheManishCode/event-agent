@@ -34,6 +34,7 @@ from flask import Flask, Response, abort, g, jsonify, request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from eventmate.planning import intake
+from eventmate.arcade_pulse import pulse as _arcade_pulse
 from eventmate.assistant.agent import Assistant, AssistantError
 from eventmate.assistant.approvals import ApprovalError
 from eventmate.assistant.identity import LOCAL_ORGANIZER, Perm, Principal
@@ -60,12 +61,18 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 STATIC_FILES = {
     "app.js": "text/javascript; charset=utf-8", "style.css": "text/css; charset=utf-8", "favicon.svg": "image/svg+xml",
     "avatar.glb": "model/gltf-binary", "model-viewer.min.js": "text/javascript; charset=utf-8",  # the assistant avatar and its viewer (docs/ATTRIBUTIONS.md)
+    # the /arcade page: a 3D cabinet scene (docs/ARCADE_UI.md)
+    "cabinet.glb": "model/gltf-binary", "arcade.css": "text/css; charset=utf-8", "arcade.js": "text/javascript; charset=utf-8",
+    "arcade3d.js": "text/javascript; charset=utf-8", "three.min.js": "text/javascript; charset=utf-8", "CopyShader.js": "text/javascript; charset=utf-8",
+    "LuminosityHighPassShader.js": "text/javascript; charset=utf-8", "EffectComposer.js": "text/javascript; charset=utf-8", "RenderPass.js": "text/javascript; charset=utf-8",
+    "ShaderPass.js": "text/javascript; charset=utf-8", "MaskPass.js": "text/javascript; charset=utf-8", "UnrealBloomPass.js": "text/javascript; charset=utf-8",
+    "GLTFLoader.js": "text/javascript; charset=utf-8",
 }
 # The avatar viewer injects one fixed <style> block, reads the model's textures from blob: URLs that its own script creates, and compiles a small WebAssembly decoder.
 # Each is allowed as narrowly as possible: one exact hash instead of unsafe-inline, blob: (which only same-origin script can mint) instead of any external source,
 # and wasm-unsafe-eval, which permits WebAssembly compilation only and never string eval.
 VIEWER_STYLE_HASH = "sha256-PXtZZkJMMyc18o/DN1ZEFOJ2qEGq95IQbVaJFMOXOb0="
-LONG_CACHE = frozenset({"avatar.glb", "model-viewer.min.js"})  # large and unchanging: not re-sent on every page load
+LONG_CACHE = frozenset({"avatar.glb", "model-viewer.min.js", "cabinet.glb", "three.min.js"})  # large and unchanging: not re-sent on every page load
 LOOPBACK = {"127.0.0.1", "localhost", "[::1]", "::1"}
 CSP = (
     f"default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' '{VIEWER_STYLE_HASH}'; img-src 'self' data: blob:; "
@@ -541,6 +548,10 @@ def create_app(
     def index():
         return Response((STATIC_DIR / "index.html").read_bytes(), mimetype="text/html")
 
+    @app.get("/arcade")
+    def arcade():
+        return Response((STATIC_DIR / "arcade.html").read_bytes(), mimetype="text/html")
+
     @app.get("/static/<name>")
     def static_file(name: str):
         if name not in STATIC_FILES:
@@ -662,16 +673,34 @@ def create_app(
     @app.post("/api/intake/confirm")
     def intake_confirm():
         b = body(IntakeConfirmBody)
-        with lock:
-            outcome = em.confirm_intake(b.draft, b.raw_text, today=today_fn(), guest_list_id=b.guest_list_id, source=b.source)
+        _arcade_pulse.begin_run("intake confirm: full plan run")
+        try:
+            with lock:
+                outcome = em.confirm_intake(b.draft, b.raw_text, today=today_fn(), guest_list_id=b.guest_list_id, source=b.source)
+        except Exception as exc:
+            _arcade_pulse.finish(False, str(exc))
+            raise
+        _arcade_pulse.finish(outcome.plan is not None, "; ".join(v.detail for v in outcome.violations))
         return plan_response(outcome)
 
     @app.post("/api/plans")
     def create_plan():
         b = body(PlanBody)
-        with lock:
-            outcome = em.plan(b.request, today=today_fn(), guest_list_id=b.guest_list_id)
+        _arcade_pulse.begin_run("plan: " + b.request[:100])
+        try:
+            with lock:
+                outcome = em.plan(b.request, today=today_fn(), guest_list_id=b.guest_list_id)
+        except Exception as exc:
+            _arcade_pulse.finish(False, str(exc))
+            raise
+        _arcade_pulse.finish(outcome.plan is not None, "; ".join(v.detail for v in outcome.violations))
         return plan_response(outcome)
+
+    @app.get("/api/arcade/pulse")
+    def arcade_pulse():
+        # Read-only observability of the in-flight run; takes no EventMate lock
+        # so the page can watch while the (lock-held) plan call is running.
+        return jsonify(_arcade_pulse.snapshot())
 
     def plan_response(outcome):
         payload = {

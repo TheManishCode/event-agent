@@ -22,6 +22,7 @@ from eventmate.planning.community import load_profiles, match_subtype
 from eventmate.agents.budget import BudgetAgent
 from eventmate.agents.guest import GuestAgent, GuestRepository
 from eventmate.agents.vendor import VendorAgent, VendorRepository
+from eventmate.arcade_pulse import pulse as _arcade_pulse
 from eventmate.decision_logger import DecisionLogger
 from eventmate.pricing.reality import reality_check
 from eventmate.schemas import (
@@ -571,9 +572,11 @@ class ManagerAgent:
         )
 
     def _parse_and_log(self, text: str, today: Optional[date]) -> EventRequest:
+        _arcade_pulse.stage_started("parse")
         try:
             request = parse_request(text, today=today, known_cities=self.repo.cities())
         except RequestParseError as exc:
+            _arcade_pulse.stage_done("parse")
             self.logger.log(
                 request_id="unparsed",
                 agent=self.agent_name,
@@ -599,9 +602,11 @@ class ManagerAgent:
             confidence=request.parse_confidence,
             source="user_input",
         )
+        _arcade_pulse.stage_done("parse")
         return request
 
     def _execute_until_sourcing(self, request: EventRequest, guest_list_id: Optional[str]):
+        _arcade_pulse.stage_started("decompose")
         graph = decompose(request)
         checks = verify_graph(request, graph)
         failed = [c for c in checks if not c.passed]
@@ -618,6 +623,7 @@ class ManagerAgent:
         )
         if failed:
             raise RuntimeError("internal error: decomposition violates " + ", ".join(c.name for c in failed))
+        _arcade_pulse.stage_done("decompose")
 
         allocation, guests = None, None
         shortlists: Dict[VendorCategory, object] = {}
@@ -625,16 +631,22 @@ class ManagerAgent:
             if not all(graph.get(d).status == TaskStatus.DONE for d in task.depends_on):
                 continue
             if task.kind == TaskKind.ALLOCATE_BUDGET:
+                _arcade_pulse.stage_started("budget")
                 allocation = self.budget.allocate(request)
+                _arcade_pulse.stage_done("budget")
             elif task.kind == TaskKind.TRACK_GUESTS:
+                _arcade_pulse.stage_started("guests")
                 guests = self.guest.summarize(request, guest_list_id)
                 request = self._with_guest_diets(request, guests)
+                _arcade_pulse.stage_done("guests")
             elif task.kind == TaskKind.SOURCE_VENDOR:
+                _arcade_pulse.stage_started("vendors")
                 category = VendorCategory(task.subject)
                 shortlists[category] = self.vendor.shortlist_category(request, category, allocation.cap_for(category))
             else:
                 continue  # later stages are executed by ``run``
             graph = graph.with_status(task.id, TaskStatus.DONE)
+        _arcade_pulse.stage_done("vendors")
         return graph, request, guests, allocation, shortlists
 
     def _with_guest_diets(self, request: EventRequest, guests: GuestSummary) -> EventRequest:
@@ -665,6 +677,9 @@ class ManagerAgent:
     ) -> PlanOutcome:
         """Same pipeline for an already-parsed request. ``persist=False`` is a dry run: nothing is stored."""
         self._require_pipeline()
+        # the request was already parsed (intake conversation or a chosen trade-off)
+        _arcade_pulse.stage_started("parse")
+        _arcade_pulse.stage_done("parse")
         return self._run_from(request, today or date.today(), guest_list_id, plan_id, len(self.logger.entry_ids), change_reason, persist)
 
     def _require_pipeline(self) -> None:
@@ -702,14 +717,18 @@ class ManagerAgent:
             if t.kind in (TaskKind.BUILD_SCHEDULE, TaskKind.SCHEDULE_REMINDER, TaskKind.BUILD_PLAN_MODEL):
                 graph = graph.with_status(t.id, TaskStatus.DONE)
 
+        _arcade_pulse.stage_started("validate")
         report = self.validator.validate(planned.draft)
+        _arcade_pulse.stage_done("validate")
         if not report.passed:
             return outcome(report.violations)
         graph = graph.with_status("validate_plan:event", TaskStatus.DONE)
 
         plan = assemble_plan(planned.draft, report, 1, None, change_reason, tuple(self.logger.entry_ids[start:]))
         if persist:
+            _arcade_pulse.stage_started("store")
             self.store.save(plan)
             self.explainer.explain(plan)
+            _arcade_pulse.stage_done("store")
         graph = graph.with_status(TERMINAL_TASK_ID, TaskStatus.DONE)
         return outcome((), plan)
