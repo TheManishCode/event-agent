@@ -481,3 +481,32 @@ def test_hostile_unicode_digit_text_never_crashes():
             parse(t)
         except RequestParseError:
             pass
+
+
+# ---- audit: input limits of the free-text parser
+
+def test_request_text_limits_are_exact_and_empty_text_is_refused(repo):
+    from eventmate.agents.manager import MAX_TEXT_CHARS, RequestParseError, parse_request
+
+    base = "Plan a 120-person engagement party in Pune on December 12 under INR 200,000. Vegetarian catering, indoor venue."
+    for bad in ("", "   \n", None, 5):
+        with pytest.raises(RequestParseError, match="empty"):
+            parse_request(bad, today=TODAY, known_cities=repo.cities())
+    padded = base + " " * (MAX_TEXT_CHARS - len(base))
+    assert len(padded) == MAX_TEXT_CHARS and parse_request(padded, today=TODAY, known_cities=repo.cities()).guest_count == 120
+    with pytest.raises(RequestParseError, match="exceeds"):
+        parse_request(padded + " ", today=TODAY, known_cities=repo.cities())
+
+
+def test_an_event_date_beyond_the_horizon_is_refused_and_the_last_allowed_day_is_not(repo):
+    from datetime import timedelta
+
+    from eventmate.agents.manager import MAX_EVENT_AHEAD_DAYS, RequestParseError, parse_request
+
+    def at(day):
+        return f"Plan a 120-person engagement party in Pune on {day.isoformat()} under INR 200,000. Vegetarian catering, indoor venue."
+
+    last = TODAY + timedelta(days=MAX_EVENT_AHEAD_DAYS)
+    assert parse_request(at(last), today=TODAY, known_cities=repo.cities()).event_date == last
+    with pytest.raises(RequestParseError, match="years|ahead|far"):
+        parse_request(at(last + timedelta(days=1)), today=TODAY, known_cities=repo.cities())

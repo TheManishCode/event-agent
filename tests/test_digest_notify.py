@@ -396,3 +396,28 @@ def test_api_rejects_bad_input_and_needs_csrf(client):
     raw = client.post("/api/notify/propose", data=json.dumps({"destination": OWNER}), headers={"Content-Type": "application/json"})
     assert raw.status_code in (400, 403)
     assert client.get("/api/plans/nope/digests").status_code in (400, 404)
+
+
+# ---- audit: the owner-notification limits are pinned at their documented values
+
+def test_the_owner_email_defaults_are_four_a_day_thirty_minutes_apart_nine_to_twenty_ist(em):
+    from eventmate.messaging.notify import WINDOW, NotifyLimits
+
+    assert (NotifyLimits().per_day, NotifyLimits().min_gap_minutes, WINDOW) == (4, 30, (9, 20))
+    assert (em.notifier.limits.per_day, em.notifier.limits.min_gap_minutes) == (4, 30)
+    p = em.notifier.propose(OWNER)
+    assert "between 09:00 and 20:00 IST" in p.summary and "at most 4 a day and 30 minutes apart" in p.summary
+
+
+def test_the_confirmation_text_names_exactly_what_the_owner_allowed_and_what_it_leaves_out(em):
+    def split(summary):
+        contain = summary.split("Each email will contain: ")[1].split(". It will not include")[0]
+        left_out = summary.split("It will not include: ")[1].split(" Emails go out")[0]
+        return contain, left_out
+
+    contain, left = split(em.notifier.propose(OWNER).summary)
+    assert "vendor names" not in contain and "confirmed amounts" not in contain and "wording" not in contain
+    assert "vendor names" in left and "confirmed amounts" in left and "vendor message text" in left and "or your budget" in left
+    contain, left = split(em.notifier.propose(OWNER, include_vendor_names=True, include_amounts=True, include_raw_text=True).summary)
+    assert "vendor names" in contain and "confirmed amounts" in contain and "the vendors' own wording" in contain
+    assert left.startswith("or your budget") and "vendor names" not in left  # the budget is never an option
