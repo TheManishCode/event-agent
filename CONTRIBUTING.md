@@ -18,7 +18,7 @@ Planning tests need Fast Downward and VAL (`EVENTMATE_FD`, `EVENTMATE_VAL`; see 
 - Keep `python -m pyflakes eventmate tests` clean.
 
 ## Layout
-Put new code in the subpackage that matches its purpose (`planning`, `pricing`, `messaging`, `followthrough`, `integrations`, `agents`). Read-only integrations must not import models or shells (a test enforces this).
+Put new code in the subpackage that matches its purpose (`planning`, `pricing`, `messaging`, `followthrough`, `sourcing`, `integrations`, `agents`). Read-only integrations must not import models or shells (a test enforces this).
 
 ## Pull requests
 Describe what changed and why, list what you did not run, and include no secrets in the diff.

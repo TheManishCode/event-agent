@@ -56,6 +56,8 @@ class JobWorker:
             c = contacts.get(vid)
             if c is None:
                 raise ValueError(f"no saved contact for {vid}: save one first")
+            if vid.startswith("ext_") and not c.confirmed_by:
+                raise ValueError(f"the contact for {vid} was not confirmed by you")
             out[vid] = (c.preferred, c.email if c.preferred == "email" else "+" + c.whatsapp)  # whatsapp is stored as digits; the parser wants the +
         return out
 
@@ -210,6 +212,9 @@ class JobWorker:
             if d.status == "sent" and d.sent_at is not None:
                 vendors[vid] = p.model_copy(update={"state": "asked", "asked_at": d.sent_at})
                 events.append(f"sent:{vid}")
+            elif d.status == "blocked" and not has_item("do_not_contact", p.draft_id):
+                vendors[vid] = p.model_copy(update={"state": "unresponsive"})
+                items.append(_item("do_not_contact", f"The request to {vid} was not sent: blocked, do not contact. {d.error}".strip(), vid, p.draft_id))
             elif d.status in ("outcome_unknown", "failed", "expired", "denied") and not has_item("check_unknown_send", p.draft_id):
                 vendors[vid] = p.model_copy(update={"state": "unresponsive"})
                 items.append(_item("check_unknown_send", f"The request to {vid} is '{d.status}'. Check the vendor chat before sending again. {d.error}".strip(), vid, p.draft_id))
@@ -256,7 +261,7 @@ class JobWorker:
                 if d is not None and d.status in ("prepared", "approved", "sending"):
                     continue  # still on its way
                 awaiting.remove(mid)
-                if d is None or d.status in ("denied", "expired", "failed", "outcome_unknown"):
+                if d is None or d.status in ("denied", "expired", "failed", "outcome_unknown", "blocked"):
                     owner = by_id.get(mid)
                     vid = next((v for v, x in vendors.items() if owner and x.draft_id == owner.draft_id), "")
                     why = "no automatic answer was sent" if d is None else f"the automatic answer to them is {d.status.replace('_', ' ')}"

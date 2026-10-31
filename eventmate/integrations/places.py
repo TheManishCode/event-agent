@@ -22,7 +22,8 @@ from eventmate.netutil import NETWORK_ERRORS, loads, read_capped
 from eventmate.schemas import PlaceInfo, PlaceReview, PlaceSearch
 
 URL = "https://places.googleapis.com/v1/places:searchText"
-BASE_FIELDS = "places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.googleMapsUri"
+BASE_FIELDS = "places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.googleMapsUri"
+WEBSITE_FIELD = "places.websiteUri"  # billed at a higher tier than the base fields, so it is requested only when asked for
 MAX_REPLY_BYTES = 2_000_000
 TIMEOUT_S = 20
 CACHE_TTL_S = 600
@@ -62,7 +63,7 @@ def weighted(rating: Optional[float], count: Optional[int]) -> Optional[float]:
 class PlacesSource:
     def __init__(self, api_key: Optional[str] = None, transport: Callable[[str, dict, bytes, float], bytes] = _post, clock: Callable[[], float] = time.monotonic):
         self._key, self._transport, self._clock = api_key, transport, clock
-        self._cache: Dict[Tuple[str, str, bool], Tuple[float, PlaceSearch]] = {}
+        self._cache: Dict[Tuple[str, str, bool, bool], Tuple[float, PlaceSearch]] = {}
         self._lock = threading.Lock()
 
     def __repr__(self) -> str:
@@ -79,19 +80,19 @@ class PlacesSource:
             raise PlacesError("GOOGLE_PLACES_API_KEY has an unexpected format")
         return key
 
-    def search(self, kind: str, city: str, reviews: bool = False, limit: int = 10) -> PlaceSearch:
+    def search(self, kind: str, city: str, reviews: bool = False, limit: int = 10, websites: bool = False) -> PlaceSearch:
         if kind not in QUERIES:
             raise ValueError(f"kind must be one of {', '.join(QUERIES)}")
         city = clean_city(city)
         if not 1 <= limit <= 20:
             raise ValueError("limit must be 1-20")
         key = self._api_key()
-        ck = (kind, city.casefold(), reviews)
+        ck = (kind, city.casefold(), reviews, websites)
         with self._lock:
             hit = self._cache.get(ck)
         if hit and self._clock() - hit[0] < CACHE_TTL_S:
             return hit[1]
-        fields = BASE_FIELDS + (",places.reviews" if reviews else "")
+        fields = BASE_FIELDS + (",places.reviews" if reviews else "") + ("," + WEBSITE_FIELD if websites else "")
         body = {"textQuery": f"{QUERIES[kind]} in {city}", "maxResultCount": limit, "languageCode": "en", "regionCode": "IN"}
         headers = {"X-Goog-Api-Key": key, "X-Goog-FieldMask": fields, "Content-Type": "application/json"}
         try:
@@ -150,6 +151,9 @@ class PlacesSource:
             name=name, address=_text(it.get("formattedAddress"), 200) or None, rating=rating, rating_count=count, weighted_rating=weighted(rating, count),
             price_level=_PRICE.get(it.get("priceLevel")), reviews=tuple(revs),
         )
+        pid, site = it.get("id"), it.get("websiteUri")
+        fields["place_id"] = pid if isinstance(pid, str) and re.fullmatch(r"[A-Za-z0-9_-]{8,200}", pid) else None
+        fields["website"] = site if isinstance(site, str) and re.fullmatch(r"https?://[^\s\x00-\x1f\x7f<>\"']{1,2040}", site) else None  # anything else is dropped, the place is kept
         try:
             return PlaceInfo(maps_uri=uri if isinstance(uri, str) else None, **fields)
         except ValueError:

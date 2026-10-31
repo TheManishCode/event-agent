@@ -515,7 +515,9 @@ def test_vendor_scores_card_shows_the_formula_for_recorded_quotes(tmp_path):
             page.click("#tab-budget")
             page.wait_for_selector("#scores .score", timeout=30000)
             text = page.inner_text("#scores")
-            assert text.index("cat-pune-annapurna") < text.index("cat-pune-spice") and "median" in text and "left out" not in text
+            names = em._vendor_names()
+            assert text.index(names["cat-pune-annapurna"]) < text.index(names["cat-pune-spice"]) and "median" in text and "left out" not in text
+            assert "cat-pune-annapurna" not in text and f"{names['cat-pune-annapurna']} (seed)" in text  # a name and where it came from, never a raw id
             assert "Response time" in text or "response time" in text
             browser.close()
     finally:
@@ -816,3 +818,110 @@ def test_a_required_access_need_keeps_the_plan_provisional_everywhere_until_the_
     finally:
         srv.shutdown()
     assert [x for x in problems if "status of 4" not in x] == []
+
+
+def test_find_vendors_review_confirm_job_stop_request_and_test_vendor_in_the_browser(tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    from eventmate.integrations.places import PlacesSource
+    from eventmate.messaging.channels import Inbound
+    from eventmate.messaging.conversations import SendPolicy
+    from tests.test_places import KEY, Net, place
+    from tests.test_shortlist import FakeFetcher
+
+    chans = {"email": FakeChannel("email"), "whatsapp": FakeChannel("whatsapp", False, False)}
+    net = Net([place("Sharma Caterers") | {"id": "ChIJsharma000001", "websiteUri": "https://sharma-caterers.example/"},
+               place("Kapoor Food Services", uri="https://maps.google.com/?cid=2") | {"id": "ChIJkapoor000002", "websiteUri": "https://kapoor-food.example/"}])
+    em = EventMate(log_dir=tmp_path / "l", plan_dir=tmp_path / "p", run_id="fvui", channels=chans, require_symbolic=False, places=PlacesSource(api_key=KEY, transport=net))
+    em.conversations.policy = SendPolicy(per_vendor_per_day=20, per_day=200, whatsapp_gap_s=0)
+    em.contact_fetcher = lambda: FakeFetcher({
+        "https://sharma-caterers.example/": "<html><body><a href='/contact'>Contact</a></body></html>",
+        "https://sharma-caterers.example/contact": "<html><body><a href='mailto:orders@sharma-caterers.example'>Orders</a></body></html>",
+        "https://kapoor-food.example/": "<html><body>kapoor.food@gmail.com</body></html>",
+    })
+    pid = em.plan("Plan a 150-person college fest in Pune on December 12 under INR 250,000. Venue and catering.", today=TODAY).plan.plan_id
+    before = em.store.latest(pid)
+    srv = make_server("127.0.0.1", 0, create_app(em, today_fn=lambda: TODAY, poll_seconds=0), threaded=True)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    problems = []
+    try:
+        with pw.sync_playwright() as p:
+            browser = p.chromium.launch(executable_path=CHROMIUM, args=["--no-sandbox"])
+            page = browser.new_page(viewport={"width": 1300, "height": 1200})
+            page.on("console", lambda m: problems.append(m.text) if m.type in ("error", "warning") else None)
+            page.goto(f"http://127.0.0.1:{srv.server_port}")
+            page.wait_for_selector("#hero h1", timeout=30000)
+            page.click("#tab-talk")
+            page.wait_for_selector("#find-vendors", timeout=30000)
+            assert "anti-spam and privacy rules" in page.inner_text("#fv-note") and "does not verify them" in page.inner_text("#fv-note")
+            # an unsupported source says so instead of an empty list
+            page.select_option("#fv-cat", "caterer")
+            page.select_option("#fv-src", "osm")
+            page.click("#fv-search")
+            page.wait_for_selector("#fv-msg:has-text('Not supported by this source')", timeout=30000)
+            assert page.locator(".biz").count() == 0
+            page.select_option("#fv-src", "places")
+            page.click("#fv-search")
+            page.wait_for_selector(".biz[data-vendor]", timeout=30000)
+            assert page.locator(".biz").count() == 2 and "Discovered" in page.inner_text("#find-vendors") and "Google Places" in page.inner_text("#find-vendors")
+            sharma = page.locator(".biz", has_text="Sharma Caterers")
+            sharma.locator(".find-contacts").click()
+            page.wait_for_selector(".cand", timeout=30000)
+            assert "mail link" in page.inner_text(".cand") and "sharma-caterers.example/contact" in page.inner_text(".cand")
+            assert page.locator(".biz", has_text="Kapoor").locator(".confirm-cand").count() == 0  # nothing found for it yet
+            assert em.outreach_store.contacts() == {}
+            # confirming needs a name; the user corrects the address
+            sharma.locator(".cand-value").fill("events@sharma-caterers.example")
+            sharma.locator(".confirm-cand").click()
+            page.wait_for_selector("#fv-msg:has-text('Enter your name')", timeout=30000)
+            assert em.outreach_store.contacts() == {}
+            sharma.locator(".cand input[aria-label='Your name']").fill("Asha")
+            sharma.locator(".confirm-cand").click()
+            page.wait_for_selector("[data-confirmed]", timeout=30000)
+            conf = page.inner_text("[data-confirmed]")
+            assert "events@sharma-caterers.example" in conf and "edited by you" in conf and "Confirmed by Asha" in conf and "sharma-caterers.example/contact" in conf
+            # the other business still has no confirmed address, so it cannot be ticked
+            page.locator(".biz", has_text="Kapoor").locator(".find-contacts").click()
+            page.wait_for_selector(".biz:has-text('Kapoor') .cand", timeout=30000)
+            assert "generic mailbox" in page.locator(".biz", has_text="Kapoor").inner_text() and page.locator(".biz", has_text="Kapoor").locator("input[type=checkbox]").count() == 0
+            # start a job for the confirmed business only
+            page.fill("#o-by", "Asha")
+            page.check("input[aria-label='Ask Sharma Caterers']")
+            page.click("#fv-start")
+            page.wait_for_selector(".job [data-item='approve_requests']", timeout=30000)
+            assert chans["email"].sent == [] and "Sharma Caterers" in page.inner_text(".job") and "ext_" not in page.inner_text(".job")
+            page.click(".job button:has-text('Approve all requests')")
+            page.wait_for_selector(".job [data-item='approve_requests']", state="detached", timeout=30000)
+            assert [s[0] for s in chans["email"].sent] == ["events@sharma-caterers.example"]
+            assert page.locator(".thread [data-origin='discovered']").count() == 1
+            # they reply asking us to stop: the address goes on the do-not-contact list
+            sent_id = em.outreach(pid)[0].external_id
+            chans["email"].inbox = [Inbound(channel="email", sender="events@sharma-caterers.example", external_id="<s1>", received_at=datetime.now(timezone.utc) + timedelta(minutes=2), body="Please stop messaging us.", in_reply_to=sent_id)]
+            page.click("#o-poll")
+            page.wait_for_selector("#dnc .sup", timeout=30000)
+            assert "events@sharma-caterers.example" in page.inner_text("#dnc .sup") and "stop request" in page.inner_text("#dnc .sup") and "other addresses at sharma-caterers.example are not blocked" in page.inner_text("#dnc .sup")
+            # only the user lifts it, with a reason
+            page.locator("#dnc .sup .lift").click()
+            page.wait_for_selector("#o-msg:not(:empty)", timeout=30000)  # no reason given: refused with a message
+            assert em.is_suppressed("email", "events@sharma-caterers.example") is not None
+            page.locator("#dnc .sup input[aria-label='Reason']").fill("they confirmed by phone it is fine")
+            page.locator("#dnc .sup input[aria-label='Your name']").fill("Asha")
+            page.locator("#dnc .sup .lift").click()
+            page.wait_for_selector("#dnc .sup", state="detached", timeout=30000)
+            assert em.is_suppressed("email", "events@sharma-caterers.example") is None
+            # a test vendor needs the ownership statement and is labelled
+            page.locator("#find-vendors summary").click()
+            page.fill("#tv-name", "Test Caterer")
+            page.fill("#tv-email", "owner@personal.test")
+            page.click("#tv-add")
+            page.wait_for_selector("#o-msg:has-text('own the address')", timeout=30000)  # ownership not confirmed: refused
+            assert em.externals.all() and not [b for b in em.externals.all() if b.is_test]
+            page.check("#tv-own")
+            page.click("#tv-add")
+            page.wait_for_selector(".biz:has-text('Test Caterer')", timeout=30000)
+            assert "TEST VENDOR (address owned by Asha)" in page.locator(".biz", has_text="Test Caterer").inner_text()
+            browser.close()
+    finally:
+        srv.shutdown()
+    assert [x for x in problems if "status of 4" not in x] == []
+    assert em.store.latest(pid) == before  # none of this changed the plan

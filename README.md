@@ -18,6 +18,7 @@ Language models are used where wording helps (reading your brief, suggesting ide
 | **Ideas** | Personalized suggestions from verified facts; templates work with no model; model ideas are guarded (no prices, no invented vendors, no availability or cultural claims) |
 | **Community events** | Profile-driven (college fest, neighbourhood, fundraiser, local cultural). Hard checks for attendance, funding, volunteers, timeline and accessibility; conditional items (permits, noise, food licence…) that only you can mark |
 | **Quotes** | Ledger with provenance and expiry, hidden-cost flags, and a transparent vendor score |
+| **Find vendors** | Finds businesses and public contact details from their own pages; you review and confirm each address; then EventMate sends and tracks replies. Discovered businesses are kept apart from the vendor database, and a do-not-contact list covers every plan and job |
 | **Vendors** | Hash-approved messages over email (SMTP/IMAP) or WhatsApp (self-hosted gateway, experimental); replies read as untrusted text; optional narrow standing permission with caps, window and kill switch |
 | **Jobs** | "Get N comparable quotes by a deadline": claims you confirm, nudges, expiry, an in-app digest and an optional email copy to you |
 | **Assistant** | Grounded answers with sources, permissioned tools, proposals that need your click |
@@ -66,13 +67,14 @@ eventmate/
   planning/                       community events, ideas, rule packs, conversational intake
   pricing/                        quote ledger, vendor score, budget ledger, reality check
   messaging/                      email/WhatsApp channels, approvals, conversations, digests, owner notifications
+  sourcing/                       discovered businesses, public contact extraction, shortlists, the do-not-contact list
   followthrough/                  jobs, price claims, the background worker
   integrations/                   flights, weather, places, venue discovery, deals search, explore (read-only)
   assistant/                      grounded Q&A, tools, approvals, evals
   web/                            Flask API and single-page UI
   data/                           seed vendors, profiles, idea templates, knowledge base
 prompts/                          versioned prompt files (wording and output format only)
-tests/                            1512 tests
+tests/                            1696 tests
 docs/                             decisions, roadmap, setup guides, design notes
 ```
 
@@ -83,6 +85,7 @@ docs/                             decisions, roadmap, setup guides, design notes
 - **Failures explain themselves.** Every failure names the violated constraint and a concrete repair.
 - **Nothing is overwritten.** Every replan writes a new immutable version and a diff.
 - **Nothing leaves without approval.** Vendor messages are bound to a hash of their exact text. The only exception is an optional, capped, time-boxed standing permission for fixed follow-up questions, with a kill switch. Request templates and automatic follow-ups never contain your budget or a price; text you type yourself is sent as written.
+- **Nothing found is used until you confirm it.** An address read from a business's own page or listing is a candidate with its source. Only an address you confirm can be written to, and a stop request or a permanent delivery failure for a message we sent puts it on a do-not-contact list that only you can lift. Discovery depends on what a source publishes and coverage varies by city and category. EventMate does not check anti-spam or privacy law; check the rules that apply to you before contacting businesses.
 - **Replies are untrusted data.** A vendor reply never records a quote, changes a plan or approves anything.
 - **Conservative sending.** A send is claimed before it happens (a file lock across processes), and a send whose outcome is unknown is never retried automatically. This reduces the chance of duplicates; it cannot make one impossible.
 - **Provisional until verified.** If a need you stated cannot be checked from the data (for example a required access need the venue has not declared), the plan is built but marked **Needs verification** everywhere; it is not called verified until you record the venue's answer. Conditional requirements (permits, noise rules, licences…) stay "not verified" until you mark them; EventMate never says a plan is safe or compliant.
@@ -93,7 +96,7 @@ docs/                             decisions, roadmap, setup guides, design notes
 python -m pytest                  # whole suite
 ```
 
-1512 tests passed on Python 3.14.8 with Fast Downward, VAL and Chromium available. Without the solvers most planning tests fail by design; without Chromium the browser tests skip. Tests use fake SMTP/IMAP and fake channels and never call a keyed or external service.
+1696 tests passed on Python 3.14.8 with Fast Downward, VAL and Chromium available. Without the solvers most planning tests fail by design; without Chromium the browser tests skip. Tests use fake SMTP/IMAP and fake channels and never call a keyed or external service.
 
 ## Documentation
 

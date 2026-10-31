@@ -50,6 +50,16 @@ class Page:
     text: str
 
 
+@dataclass(frozen=True)
+class RawPage:
+    """A page with its markup, for callers that need link targets. The same fetch rules applied: the markup is data and is never run."""
+
+    url: str
+    title: str
+    text: str
+    html: str
+
+
 def default_resolver(host: str) -> List[str]:
     try:
         infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
@@ -257,6 +267,10 @@ class SafeFetcher:
     # ---------------------------------------------------------------- public
 
     def fetch(self, url: str) -> Page:
+        raw = self.fetch_html(url)
+        return Page(url=raw.url, title=raw.title, text=raw.text)
+
+    def fetch_html(self, url: str) -> RawPage:
         final, status, headers, body = self._get(url, True, self.max_bytes)
         if status != 200:
             raise FetchError(f"the page answered HTTP {status}")
@@ -273,4 +287,4 @@ class SafeFetcher:
         except LookupError:
             html = body.decode("utf-8", "replace")
         title, text = extract_text(html)
-        return Page(url=final, title=title, text=text)
+        return RawPage(url=final, title=title, text=text, html=html)

@@ -23,7 +23,7 @@ _MONEY = re.compile(r"\d{4,}|₹|\b(?:inr|rs|rupees?)\b|lakh", re.I)
 ITEM_LABEL = {
     "confirm_claim": "a price to confirm", "vendor_question": "a question from a vendor", "approve_requests": "requests to approve", "approve_nudge": "a follow-up to approve",
     "check_unknown_send": "a message whose delivery is unknown", "unclear_price": "a reply to read", "vendor_unavailable": "a vendor who is not available",
-    "no_quotes_possible": "too few vendors left", "different_sender": "a reply from an unexpected address",
+    "no_quotes_possible": "too few vendors left", "different_sender": "a reply from an unexpected address", "do_not_contact": "an address on the do-not-contact list",
 }
 
 

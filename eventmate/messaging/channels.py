@@ -60,6 +60,15 @@ class KnownThread:
 
 
 @dataclass(frozen=True)
+class Bounce:
+    """A delivery-failure notice (an RFC 3464 report). Only the structured fields are read; the remote server's own words are not kept."""
+
+    permanent: bool  # Action: failed with a 5.x.x status
+    recipient: str  # who the notice says it could not deliver to
+    original_message_id: str = ""  # the Message-ID of the message that failed, from the returned headers
+
+
+@dataclass(frozen=True)
 class Inbound:
     channel: str
     sender: str
@@ -71,6 +80,7 @@ class Inbound:
     references: str = ""
     attachments: int = 0
     truncated: bool = False
+    bounce: Optional[Bounce] = None
 
 
 class Channel(Protocol):
@@ -239,6 +249,15 @@ class EmailChannel:
             sender = email.utils.parseaddr(str(msg.get("From", "")))[1].lower()
             if not sender or sender == self.config.from_addr.lower():
                 return None
+            bounce = _dsn(msg)
+            if bounce is not None:
+                mid = str(msg.get("Message-ID", "")).strip()
+                when = email.utils.parsedate_to_datetime(str(msg["Date"])) if msg["Date"] else self._now()
+                when = when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+                return Inbound(
+                    channel="email", sender=sender[:254], external_id=(mid or "nomsgid-" + hashlib.sha256(raw).hexdigest()[:32])[:400], received_at=when.astimezone(timezone.utc),
+                    body=f"Delivery failure notice ({'permanent' if bounce.permanent else 'temporary'}) for {bounce.recipient[:120]}", subject=str(msg.get("Subject", ""))[:200], bounce=bounce,
+                )
             if str(msg.get("Auto-Submitted", "no")).lower() != "no" or str(msg.get("Precedence", "")).lower() in ("bulk", "junk", "list") or msg.get("List-Id"):
                 return None  # robots and mailing lists are not vendor replies
             part = msg.get_body(preferencelist=("plain",))
@@ -258,6 +277,30 @@ class EmailChannel:
             )
         except (ValueError, TypeError, KeyError, LookupError):
             return None  # one malformed message must not stop the others
+
+
+def _dsn(msg) -> Optional[Bounce]:
+    """A structured delivery-status report, or None. A plain message that merely looks like a bounce is not one."""
+    try:
+        if msg.get_content_type() != "multipart/report" or (msg.get_param("report-type") or "").lower() != "delivery-status":
+            return None
+        status_part, original = None, ""
+        for part in msg.iter_parts():
+            ct = part.get_content_type()
+            if ct == "message/delivery-status":
+                status_part = part
+            elif ct in ("message/rfc822", "text/rfc822-headers"):
+                inner = part.get_payload(0) if ct == "message/rfc822" else email.message_from_string(str(part.get_content()), policy=email.policy.default)
+                original = str(inner.get("Message-ID", "")).strip()[:400]
+        blocks = status_part.get_payload() if status_part is not None else []
+        if len(blocks) < 2:
+            return None
+        per_recipient = blocks[1]  # the first block describes the message, the next ones each recipient
+        recipient = str(per_recipient.get("Final-Recipient") or per_recipient.get("Original-Recipient") or "").split(";", 1)[-1].strip().strip("<>")[:254]
+        action, status = str(per_recipient.get("Action", "")).strip().lower(), str(per_recipient.get("Status", "")).strip()
+        return Bounce(permanent=action == "failed" and status.startswith("5."), recipient=recipient, original_message_id=original)
+    except (ValueError, TypeError, KeyError, LookupError, AttributeError):
+        return None
 
 
 # ----------------------------------------------------------------- WhatsApp through WAHA

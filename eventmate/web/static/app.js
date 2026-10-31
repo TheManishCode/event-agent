@@ -530,7 +530,9 @@
   // The F10 formula over recorded quotes, with weights and reasons. A component without data is left out, never guessed.
   async function renderScores(card) {
     const cats = [...new Set(state.plan.selections.map((x) => x.category))];
-    const boards = await Promise.all(cats.map((c) => api(`/api/observations/score/${encodeURIComponent(c)}`)));
+    const [dirRes, ...boards] = await Promise.all([api("/api/vendors/directory"), ...cats.map((c) => api(`/api/observations/score/${encodeURIComponent(c)}`))]);
+    const dir = dirRes.ok ? dirRes.data : {};
+    const who = (id) => { const d = dir[id]; return d ? `${d.name} (${d.label || d.origin})` : id; };  // a name and where it came from, never a raw id
     for (const n of [...card.children].slice(1)) n.remove();
     card.append(el("p", { class: "muted", text: "Computed from the quotes you recorded: price against the median of at least three current quotes, completeness of the checklist, and how well the quote is evidenced. Response time, terms and ratings are not scored: there is no data for them." }));
     let any = false;
@@ -541,12 +543,12 @@
       any = true;
       card.append(el("h3", { text: titleCase(cats[i]) }));
       for (const s of b.scores) {
-        card.append(el("div", { class: "alt score" }, el("b", { text: s.vendor_id }), " ", el("span", { class: "tag eli", text: s.overall === null ? "n/a" : `${s.overall}/100` }),
+        card.append(el("div", { class: "alt score" }, el("b", { text: who(s.vendor_id) }), " ", el("span", { class: "tag eli", text: s.overall === null ? "n/a" : `${s.overall}/100` }),
           el("span", { class: "muted", text: ` ${Math.round(s.coverage * 100)}% of the formula had data (${s.status})` }),
           ...s.components.map((c) => el("div", { class: "muted", text: `• ${titleCase(c.name)} (${Math.round(c.weight * 100)}%): ${c.score === null ? "left out" : c.score}; ${c.detail}` })),
           ...s.notes.map((n) => el("div", { class: "bad", text: "! " + n }))));
       }
-      for (const u of b.unscored) card.append(el("div", { class: "alt muted", text: `${u.vendor_id}: not scored; ${u.reason}` }));
+      for (const u of b.unscored) card.append(el("div", { class: "alt muted", text: `${who(u.vendor_id)}: not scored; ${u.reason}` }));
     });
     if (!any) card.append(el("p", { class: "muted", id: "scores-empty", text: "No quotes recorded yet. Record quotes above to compare vendors." }));
   }
@@ -768,14 +770,16 @@
     state.talkTimer = setInterval(() => { if (!["INPUT", "TEXTAREA", "SELECT"].includes((document.activeElement || {}).tagName)) renderTalk(card); }, 20000);
   }
 
-  const STATUS_TAG = { prepared: ["waiting for you", "rej"], approved: ["approved, sending soon", "eli"], sending: ["sending", "eli"], sent: ["sent", "eli"], failed: ["not sent", "rej"], outcome_unknown: ["unknown: check the chat", "rej"], denied: ["you declined", "rej"], expired: ["expired", "rej"], marked_sent: ["you sent it", "eli"] };
+  const STATUS_TAG = { blocked: ["blocked: do not contact", "rej"], prepared: ["waiting for you", "rej"], approved: ["approved, sending soon", "eli"], sending: ["sending", "eli"], sent: ["sent", "eli"], failed: ["not sent", "rej"], outcome_unknown: ["unknown: check the chat", "rej"], denied: ["you declined", "rej"], expired: ["expired", "rej"], marked_sent: ["you sent it", "eli"] };
   const safeLink = (u) => /^(mailto:|https:\/\/wa\.me\/)/.test(u);
 
   async function renderTalk(card) {
-    const [box, contacts, auto, jobsRes, digestsRes, notifyRes] = await Promise.all([api(`/api/plans/${encodeURIComponent(state.planId)}/inbox`), api("/api/contacts"), api(`/api/plans/${encodeURIComponent(state.planId)}/autoreply`), api(`/api/plans/${encodeURIComponent(state.planId)}/jobs`), api(`/api/plans/${encodeURIComponent(state.planId)}/digests`), api("/api/notify")]);
+    const pe = encodeURIComponent(state.planId);
+    const [box, contacts, auto, jobsRes, digestsRes, notifyRes, shortRes, labelRes, supRes, unmRes] = await Promise.all([api(`/api/plans/${pe}/inbox`), api("/api/contacts"), api(`/api/plans/${pe}/autoreply`), api(`/api/plans/${pe}/jobs`), api(`/api/plans/${pe}/digests`), api("/api/notify"), api(`/api/plans/${pe}/shortlist`), api("/api/vendors/labels"), api("/api/suppressions"), api("/api/unmatched")]);
     for (const n of [...card.children].slice(1)) n.remove();
     if (!box.ok) { card.append(el("p", { class: "muted", text: "Vendor chats could not be loaded." })); return; }
     const inbox = box.data, saved = contacts.ok ? contacts.data : [];
+    state.labels = labelRes.ok ? labelRes.data : {};
     const msg = el("div", { class: "muted", id: "o-msg", role: "status" });
     const again = () => { renderTalk(card); refreshAttention(); };
     const planBase = `/api/plans/${encodeURIComponent(state.planId)}`;
@@ -841,7 +845,9 @@
       msg);
 
     card.append(updatesView(digestsRes.ok ? digestsRes.data : [], notifyRes.ok ? notifyRes.data : null, { planBase, again, fail }));
+    card.append(findVendorsView(shortRes.ok ? shortRes.data : [], labelRes.ok ? labelRes.data : {}, { planBase, again, fail, needName }));
     card.append(jobsView(jobsRes.ok ? jobsRes.data : [], saved, { planBase, again, fail, needName }));
+    card.append(suppressionView(supRes.ok ? supRes.data : [], unmRes.ok ? unmRes.data : [], { again, fail }));
     if (!inbox.threads.length) card.append(el("p", { class: "muted", id: "o-empty", text: "No conversations yet. Save a vendor contact, then draft the requests." }));
     for (const t of inbox.threads) card.append(threadView(t, { planBase, canSend, again, fail, needName }));
     // writing to one vendor by typing a contact once, without saving it
@@ -854,6 +860,122 @@
       if (res.ok) again(); else fail(res, "That request was refused.");
     } } });
     card.append(el("h3", { text: "Ask one vendor without saving a contact" }), el("div", { class: "actions" }, oneCat, oneCh, oneTo, one));
+  }
+
+  // ------------------------------------------------------------ find vendors
+  // Discovered businesses (ADR-049): found by a search, public contact read from their own pages, each address confirmed by you before anything is written to it.
+  const ORIGIN_LABEL = { discovered: "discovered", test: "TEST VENDOR" };
+  const SOURCE_LABEL = { osm: "OpenStreetMap", gplaces: "Google Places", test: "your own test address" };
+  const BLOCK_NOTE = "Check the anti-spam and privacy rules that apply to you before contacting businesses. EventMate does not verify them.";
+
+  function findVendorsView(items, labels, ctx) {
+    const { planBase, again, fail, needName } = ctx;
+    const box = el("section", { class: "alt", id: "find-vendors" }, el("b", { text: "Find vendors" }),
+      el("p", { class: "muted", text: "Find businesses, read the public contact details they publish on their own pages, review each address, then start a quote job. Nothing is contacted until you approve the exact message. Coverage depends on what a source publishes and varies by city and category." }),
+      el("p", { class: "muted", id: "fv-note", text: BLOCK_NOTE }));
+    const msg = el("div", { class: "muted", id: "fv-msg", role: "status" });
+    const cat = el("select", { id: "fv-cat", class: "input", "aria-label": "Category" }, ...["venue", "caterer", "photographer"].map((c) => el("option", { value: c, text: titleCase(c) })));
+    const src = el("select", { id: "fv-src", class: "input", "aria-label": "Source" }, el("option", { value: "", text: "Best source" }), el("option", { value: "osm", text: "OpenStreetMap (venues)" }), el("option", { value: "places", text: "Google Places (needs a key)" }));
+    box.append(el("div", { class: "actions" }, cat, src, el("button", { class: "btn primary", id: "fv-search", type: "button", text: "Search", on: { click: async () => {
+      const body = { category: cat.value }; if (src.value) body.source = src.value;
+      const r = await api(`${planBase}/shortlist/search`, { method: "POST", body });
+      if (r.ok) { toast(`${r.data.added} new, ${r.data.total} shortlisted from ${r.data.source}.` + (r.data.warnings.length ? " " + r.data.warnings.join("; ") : ""), 5000); again(); }
+      else msg.textContent = (r.data && r.data.status === "not_supported" ? "Not supported by this source: " : "") + ((r.data && r.data.error) || "The search failed.");
+    } } })), msg);
+
+    const picks = [];
+    for (const it of items) {
+      const b = it.business, test = b.is_test;
+      const label = labels[b.vendor_id];
+      const row = el("div", { class: "alt biz", "data-vendor": b.vendor_id },
+        el("b", { text: b.name }), " ", el("span", { class: "tag " + (test ? "rej" : "eli"), text: test ? label || "TEST VENDOR" : "Discovered" }), " ",
+        el("span", { class: "muted", text: `${titleCase(it.category)} · from ${SOURCE_LABEL[b.source]}${b.rating ? ` · rated ${b.rating}` : ""}` }),
+        b.source_url ? el("div", { class: "muted" }, "Source: ", el("a", { href: b.source_url, target: "_blank", rel: "noopener noreferrer nofollow", text: b.source_url })) : null,
+        b.website ? el("div", { class: "muted" }, `Website${b.website_source === "user_input" ? " (typed by you)" : ""}: `, el("a", { href: b.website, target: "_blank", rel: "noopener noreferrer nofollow", text: b.website })) : null);
+      if (!test && !b.website) {
+        const site = el("input", { class: "input", maxlength: "2048", placeholder: "Its website (the listing had none)", "aria-label": "Website" });
+        row.append(el("div", { class: "actions" }, site, el("button", { class: "btn small save-site", type: "button", text: "Save website", on: { click: async () => { const r = await api(`${planBase}/shortlist/${b.vendor_id}/website`, { method: "POST", body: { url: site.value.trim() } }); if (r.ok) again(); else fail(r, "That website was refused."); } } })));
+      }
+      if (!test && b.website && !it.contact) row.append(el("button", { class: "btn small find-contacts", type: "button", text: "Find public contact", on: { click: async () => {
+        const r = await api(`${planBase}/shortlist/${b.vendor_id}/find-contacts`, { method: "POST", body: {} });
+        if (r.ok) { if (r.data.notes.length) toast(r.data.notes.join(" "), 6000); again(); } else fail(r, "Could not read its pages.");
+      } } }));
+      for (const c of it.candidates.filter((x) => x.status === "found")) {
+        const edit = el("input", { class: "input cand-value", maxlength: "254", value: c.value, "aria-label": "Address to confirm" });
+        const who = el("input", { class: "input", maxlength: "60", placeholder: "Your name", "aria-label": "Your name", value: state.senderName || "" });
+        row.append(el("div", { class: "alt cand", "data-candidate": c.candidate_id },
+          el("div", { class: "muted" }, `Found ${c.source_kind === "page_mailto" ? "as a mail link" : c.source_kind === "page_text" ? "in the page text" : "in the listing"} on `, el("a", { href: c.source_url, target: "_blank", rel: "noopener noreferrer nofollow", text: c.source_url })),
+          ...c.flags.map((f) => el("div", { class: "bad", text: "! " + f })),
+          el("div", { class: "actions" }, edit, who,
+            el("button", { class: "btn primary small confirm-cand", type: "button", text: "Confirm this address", on: { click: async () => {
+              if (!who.value.trim()) { msg.textContent = "Enter your name: the record says who confirmed it."; return; }
+              const body = { by: who.value.trim() }; if (edit.value.trim() !== c.value) body.edited_value = edit.value.trim();
+              const r = await api(`${planBase}/shortlist/${b.vendor_id}/contacts/${c.candidate_id}/confirm`, { method: "POST", body });
+              if (r.ok) again(); else fail(r, "That address was refused.");
+            } } }),
+            el("button", { class: "btn small reject-cand", type: "button", text: "Not theirs", on: { click: async () => { const r = await api(`${planBase}/shortlist/${b.vendor_id}/contacts/${c.candidate_id}/reject`, { method: "POST", body: {} }); if (r.ok) again(); else fail(r, "Could not reject it."); } } }))));
+      }
+      if (it.contact) {
+        const c = it.contact;
+        row.append(el("div", { class: "msg out", "data-confirmed": b.vendor_id },
+          el("div", {}, el("b", { text: "Confirmed address: " }), c.email || c.whatsapp, c.edited_by_user ? " (edited by you)" : ""),
+          el("div", { class: "muted", text: `Confirmed by ${c.confirmed_by}${c.source_url ? ", read from " + c.source_url : test ? ", an address you own" : ""}` }),
+          it.blocked ? el("div", { class: "bad", text: "Blocked: " + it.blocked + ". Only you can lift it." }) : null));
+        if (!it.blocked) { const tick = el("input", { type: "checkbox", value: b.vendor_id, "aria-label": "Ask " + b.name }); picks.push({ id: b.vendor_id, cat: it.category, box: tick }); row.append(el("label", { class: "muted" }, tick, " Include in a quote job")); }
+      }
+      box.append(row);
+    }
+    if (!items.length) box.append(el("p", { class: "muted", id: "fv-empty", text: "No businesses shortlisted yet. Search above." }));
+    if (picks.length) {
+      const goalCat = () => { const cats = [...new Set(picks.filter((p) => p.box.checked).map((p) => p.cat))]; return cats.length === 1 ? cats[0] : null; };
+      box.append(el("div", { class: "actions" }, el("button", { class: "btn primary", id: "fv-start", type: "button", text: "Draft quote requests for the ticked businesses", on: { click: async () => {
+        const chosen = picks.filter((p) => p.box.checked); const category = goalCat();
+        if (!needName()) return;
+        if (!chosen.length) { msg.textContent = "Tick the businesses to ask."; return; }
+        if (!category) { msg.textContent = "Tick businesses of one category at a time."; return; }
+        const r = await api(`${planBase}/jobs`, { method: "POST", body: { category, vendor_ids: chosen.map((p) => p.id), goal: `${chosen.length} comparable ${category} quote${chosen.length === 1 ? "" : "s"}`, sender_name: state.senderName.trim(), deadline_days: 7, min_quotes: chosen.length } });
+        if (r.ok) again(); else fail(r, "Could not start the job.");
+      } } }), el("span", { class: "muted", text: "Only addresses you confirmed can be asked. You still approve the exact text before anything is sent." })));
+    }
+    // a vendor whose address is yours, for testing: needs your statement that you own it, and is labelled TEST VENDOR everywhere
+    const tn = el("input", { class: "input", id: "tv-name", maxlength: "120", placeholder: "Test vendor name", "aria-label": "Test vendor name" });
+    const te = el("input", { class: "input", id: "tv-email", maxlength: "254", placeholder: "An address you own", "aria-label": "Test address" });
+    const own = el("input", { type: "checkbox", id: "tv-own", "aria-label": "I own this address" });
+    const tc = el("select", { id: "tv-cat", class: "input", "aria-label": "Test vendor category" }, ...["caterer", "venue", "photographer"].map((c) => el("option", { value: c, text: titleCase(c) })));
+    box.append(el("details", { class: "fold" }, el("summary", { text: "Add a test vendor (an address you own)" }),
+      el("div", { class: "actions" }, tn, te, tc, el("label", { class: "muted" }, own, " I own this address"),
+        el("button", { class: "btn small", id: "tv-add", type: "button", text: "Add test vendor", on: { click: async () => {
+          if (!needName()) return;
+          const r = await api(`${planBase}/shortlist/test-vendor`, { method: "POST", body: { name: tn.value.trim(), category: tc.value, email: te.value.trim(), owns_address: own.checked, by: state.senderName.trim() } });
+          if (r.ok) again(); else fail(r, "That test vendor was refused.");
+        } } }))));
+    return box;
+  }
+
+  // The do-not-contact list and mail that is not tied to anything we sent. Only you add to or lift from the list by hand; a matched stop request adds itself.
+  function suppressionView(list, unmatched, ctx) {
+    const { again, fail } = ctx;
+    const box = el("section", { class: "alt", id: "dnc" }, el("b", { text: "Do not contact" }),
+      el("p", { class: "muted", text: "One entry covers an address on every plan and job, and stops drafts that were already queued. A stop request in a reply to us, or a permanent delivery failure for a message we sent, adds an entry. Only you can lift one." }));
+    for (const s of list.filter((x) => x.active)) {
+      const why = el("input", { class: "input", maxlength: "200", placeholder: "Why it is lifted", "aria-label": "Reason" });
+      const by = el("input", { class: "input", maxlength: "80", placeholder: "Your name", "aria-label": "Your name", value: state.senderName || "" });
+      box.append(el("div", { class: "alt sup", "data-sup": s.suppression_id }, el("b", { text: s.value }), " ", el("span", { class: "tag rej", text: s.reason.replace("_", " ") }), el("div", { class: "muted", text: `${s.note}. Added by ${s.created_by}.` }),
+        el("div", { class: "actions" }, why, by, el("button", { class: "btn small lift", type: "button", text: "Lift", on: { click: async () => {
+          const r = await api(`/api/suppressions/${s.suppression_id}/lift`, { method: "POST", body: { by: by.value.trim(), reason: why.value.trim() } }); if (r.ok) again(); else fail(r, "Say who is lifting it and why.");
+        } } }))));
+    }
+    if (!list.some((x) => x.active)) box.append(el("p", { class: "muted", text: "No addresses are on the list." }));
+    if (unmatched.length) {
+      box.append(el("h4", { text: "Messages to review" }), el("p", { class: "muted", text: "These look like a stop request or a delivery failure but are not tied to anything we sent, so they changed nothing." }));
+      for (const m of unmatched) {
+        const by = el("input", { class: "input", maxlength: "80", placeholder: "Your name", "aria-label": "Your name", value: state.senderName || "" });
+        box.append(el("div", { class: "alt unm", "data-unmatched": m.message_id }, el("b", { text: `${m.kind === "bounce" ? "Delivery failure" : "Stop-like message"} from ${m.sender}` }), el("pre", { class: "muted", style: { whiteSpace: "pre-wrap" }, text: m.body }),
+          el("div", { class: "actions" }, by, m.kind === "stop_like" ? el("button", { class: "btn small suppress-unm", type: "button", text: "Do not contact this sender", on: { click: async () => { const r = await api(`/api/unmatched/${m.message_id}/suppress`, { method: "POST", body: { by: by.value.trim() } }); if (r.ok) again(); else fail(r, "Enter your name."); } } }) : null,
+            el("button", { class: "btn small dismiss-unm", type: "button", text: "Dismiss", on: { click: async () => { const r = await api(`/api/unmatched/${m.message_id}/dismiss`, { method: "POST", body: {} }); if (r.ok) again(); } } }))));
+      }
+    }
+    return box;
   }
 
   // Job updates (ADR-047): always kept here. An email copy to you is optional, off by default, and needs you to confirm the exact address and what it may contain.
@@ -895,6 +1017,7 @@
   }
 
   // Follow-through jobs (ADR-044): a goal such as "3 comparable caterer quotes by the deadline", kept moving across days. Every item waits for you.
+  const named = (j, text) => Object.entries(j.names || {}).reduce((t, [id, n]) => t.split(id).join(n), text);  // an internal id is never shown: the name (and a test vendor's label) is
   function jobsView(jobs, saved, ctx) {
     const { again, fail, needName } = ctx;
     const box = el("section", { class: "alt", id: "jobs" }, el("b", { text: "Quote jobs" }),
@@ -904,8 +1027,9 @@
       box.append(el("div", { class: "alt job", "data-job": j.job_id },
         el("b", { text: j.goal }), " ", badge(j.status.replace("_", " "), j.status === "done" ? "ok" : j.status === "blocked" || j.status === "expired" ? "err" : "warn"),
         el("div", { class: "muted", text: j.next_action }),
+        el("div", { class: "muted job-asking", text: "Asking: " + Object.values(j.names || {}).join("; ") }),
         ...open.map((i) => {
-          const row = el("div", { class: "actions", "data-item": i.kind }, el("span", { text: i.text }));
+          const row = el("div", { class: "actions", "data-item": i.kind }, el("span", { text: named(j, i.text) }));
           const act = (label, path, body, cls = "btn small") => el("button", { class: cls, type: "button", text: label, on: { click: async () => { const r = await api(path, { method: "POST", body: body || {} }); if (r.ok) again(); else fail(r, "That did not work."); } } });
           if (i.kind === "approve_requests") row.append(act("Approve all requests", `/api/jobs/${j.job_id}/approve-requests`, {}, "btn primary small"));
           else if (i.kind === "confirm_claim") {
@@ -946,7 +1070,9 @@
   function threadView(t, ctx) {
     const { planBase, canSend, again, fail, needName } = ctx;
     const items = [...t.drafts.map((d) => ({ at: d.created_at, d })), ...t.replies.map((m) => ({ at: m.received_at, m }))].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+    const origin = t.request.vendor_origin;
     const box = el("div", { class: "alt thread", "data-vendor": t.request.vendor_id }, el("b", { text: `${titleCase(t.request.category)}: ${t.request.vendor_name}` }), " ",
+      origin === "seed" ? null : el("span", { class: "tag " + (origin === "test" ? "rej" : "eli"), "data-origin": origin, text: origin === "test" ? (state.labels && state.labels[t.request.vendor_id]) || "TEST VENDOR" : "Discovered" }), " ",
       el("span", { class: "muted", text: `${t.request.channel === "email" ? "email " + t.request.recipient : "WhatsApp +" + t.request.recipient}` }),
       t.unread ? el("span", { class: "tag eli", text: `${t.unread} new` }) : null);
     for (const it of items) {

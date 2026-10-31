@@ -209,18 +209,19 @@ class OutreachStore:
         draft = OutreachDraft(draft_id=uuid.uuid4().hex, plan_id=plan_id, created_at=now, expires_at=now + PROPOSAL_TTL, **fields)
         return self._file(plan_id)._append(draft, draft.draft_id)
 
-    def draft(self, plan: PlanVersion, category: VendorCategory, channel: str, recipient: str, sender_name: str, vendor: Optional[Tuple[str, str]] = None) -> OutreachDraft:
-        """``vendor`` = (vendor_id, name) asks a vendor other than the plan's pick, to compare quotes (jobs). The caller has checked that it exists."""
+    def draft(self, plan: PlanVersion, category: VendorCategory, channel: str, recipient: str, sender_name: str, vendor: Optional[Tuple[str, ...]] = None) -> OutreachDraft:
+        """``vendor`` = (vendor_id, name[, origin]) asks a vendor other than the plan's pick, to compare quotes (jobs). The caller has checked that it exists."""
         selection = plan.selection_for(category)
         if selection is None:
             raise ValueError(f"{category.value} is not in this plan")
-        vendor_id, vendor_name = vendor if vendor is not None else (selection.vendor_id, selection.name)
+        vendor_id, vendor_name, *rest = vendor if vendor is not None else (selection.vendor_id, selection.name)
+        origin = rest[0] if rest else "seed"
         sender = _clean_name(sender_name)
         recipient = _check_recipient(channel, recipient)
         subject, body = _message(plan, category, vendor_name, sender, self.checklists.get(category.value, ()))
         subject = subject if channel == "email" else ""
         return self._new(
-            plan.plan_id, category=category, vendor_id=vendor_id, vendor_name=vendor_name, channel=channel, recipient=recipient,
+            plan.plan_id, category=category, vendor_id=vendor_id, vendor_name=vendor_name, vendor_origin=origin, channel=channel, recipient=recipient,
             subject=subject, body=body, link=_links(channel, recipient, subject, body),
         )
 
@@ -244,7 +245,7 @@ class OutreachStore:
             body += f"\n(Sent by an automated assistant on behalf of {sender}.)"
         subject = parent.subject if parent.subject.lower().startswith("re:") or not parent.subject else f"Re: {parent.subject}"
         return self._new(
-            plan_id, category=parent.category, vendor_id=parent.vendor_id, vendor_name=parent.vendor_name, channel=parent.channel, recipient=parent.recipient,
+            plan_id, category=parent.category, vendor_id=parent.vendor_id, vendor_name=parent.vendor_name, vendor_origin=parent.vendor_origin, channel=parent.channel, recipient=parent.recipient,
             subject=subject, body=body, link=_links(parent.channel, parent.recipient, subject, body), kind="followup", parent_id=parent_id, action_key=action_key,
         )
 
@@ -329,6 +330,11 @@ class OutreachStore:
         for c in self._contacts().read():
             latest[c.vendor_id] = c
         return latest
+
+    def set_contact_record(self, contact: VendorContact) -> VendorContact:
+        """Save a fully built contact (used for confirmed external addresses, which carry where they came from)."""
+        with self._locked():
+            return self._contacts()._append(contact, contact.vendor_id)
 
     def set_contact(self, vendor_id: str, email: Optional[str], whatsapp: Optional[str], preferred: str) -> VendorContact:
         email = _check_recipient("email", email) if email else None

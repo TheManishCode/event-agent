@@ -10,7 +10,7 @@ import json
 import uuid
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from eventmate.agents.vendor import DATA_DIR, VendorRepository
 from eventmate.jsonl import JsonlLog
@@ -45,12 +45,21 @@ class ObservationStore:
         self.root = Path(root) / "observations"
         self.repo = repo
         self.checklists = _load_checklists()
+        self.external_lookup: Callable[[str], Optional[object]] = lambda vendor_id: None  # set by EventMate: finds a discovered or test business by its ext_ id
 
     def _file(self) -> _ObservationFile:
         return _ObservationFile(self.root, run_id="all")
 
     def add_quote(self, vendor_id: str, category: VendorCategory, **fields) -> QuoteObservation:
-        record = self.repo.get(category, vendor_id)
+        if vendor_id.startswith("ext_"):  # a discovered or test business: its own record, never a seed vendor
+            biz = self.external_lookup(vendor_id)
+            if biz is None:
+                raise ValueError(f"unknown vendor {vendor_id!r}")
+            if biz.category != category:
+                raise ValueError(f"{vendor_id} is a {biz.category.value}, not a {category.value}")
+            record = biz
+        else:
+            record = self.repo.get(category, vendor_id)
         if record is None:
             owner = next((c for c in VendorCategory if self.repo.get(c, vendor_id)), None)
             if owner is None:

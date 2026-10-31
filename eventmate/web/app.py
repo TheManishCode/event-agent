@@ -51,6 +51,7 @@ from eventmate.service import EventMate
 from eventmate.integrations.weather import WeatherError, WeatherNotConfigured
 from eventmate.followthrough.jobs import StaleJob
 from eventmate.followthrough.worker import digest
+from eventmate.sourcing.search import SourceNotSupported
 from eventmate.integrations.websearch import SearchError
 from eventmate.integrations.travel import CABINS, TravelError, check_date
 
@@ -207,6 +208,46 @@ class NotifyProposeBody(_Strict):
 
 class NotifyConfirmBody(_Strict):
     code: str = Field(min_length=1, max_length=128)
+
+
+class ShortlistSearchBody(_Strict):
+    category: VendorCategory
+    source: Optional[Literal["osm", "places"]] = None
+    limit: int = Field(default=10, ge=1, le=20)
+
+
+class WebsiteBody(_Strict):
+    url: str = Field(min_length=1, max_length=2048)
+
+
+class ConfirmContactBody(_Strict):
+    by: str = Field(min_length=1, max_length=60)
+    edited_value: Optional[str] = Field(default=None, max_length=254)
+
+
+class SuppressBody(_Strict):
+    channel: Literal["email", "whatsapp"]
+    value: str = Field(min_length=3, max_length=254)
+    by: str = Field(min_length=1, max_length=80)
+    note: str = Field(default="", max_length=200)
+
+
+class LiftBody(_Strict):
+    by: str = Field(min_length=1, max_length=80)
+    reason: str = Field(min_length=1, max_length=200)
+
+
+class ByBody(_Strict):
+    by: str = Field(min_length=1, max_length=80)
+
+
+class TestVendorBody(_Strict):
+    name: str = Field(min_length=1, max_length=120)
+    category: VendorCategory
+    email: str = Field(min_length=3, max_length=254)
+    owns_address: bool
+    by: str = Field(min_length=1, max_length=60)
+    city: Optional[str] = Field(default=None, max_length=80)
 
 
 class EmptyBody(_Strict):
@@ -762,7 +803,8 @@ def create_app(
         with lock:
             em.store.latest(plan_id)
             jobs = em.jobs.store.list(plan_id) if (em.store.root / "jobs.db").exists() else []
-        return jsonify([{**json.loads(j.model_dump_json()), "digest": digest(j)} for j in jobs])
+            names = em._vendor_names()
+        return jsonify([{**json.loads(j.model_dump_json()), "digest": digest(j), "names": {v: names.get(v, v) for v in j.vendors}} for j in jobs])
 
     @app.post("/api/plans/<plan_id>/jobs")
     def jobs_start(plan_id):
@@ -929,6 +971,123 @@ def create_app(
         with lock:
             st = em.notifier.disable()
         return out(st)
+
+    @app.post("/api/plans/<plan_id>/shortlist/search")
+    def shortlist_search(plan_id):
+        """Find businesses for this plan's city and category. They are shortlisted, never added to the vendor database, and nothing is contacted."""
+        plan_id, b = pid(plan_id), body(ShortlistSearchBody)
+        with lock:
+            try:
+                res = em.search_vendors(plan_id, b.category, b.source, b.limit)
+            except SourceNotSupported as exc:
+                return jsonify({"status": "not_supported", "error": str(exc)}), 422
+        return out(res)
+
+    @app.get("/api/plans/<plan_id>/shortlist")
+    def shortlist_get(plan_id):
+        plan_id = pid(plan_id)
+        with lock:
+            items = em.shortlist_view(plan_id)
+        return jsonify([json.loads(i.model_dump_json()) for i in items])
+
+    @app.post("/api/plans/<plan_id>/shortlist/<vendor_id>/website")
+    def shortlist_website(plan_id, vendor_id):
+        plan_id, vendor_id, b = pid(plan_id), pid(vendor_id), body(WebsiteBody)
+        with lock:
+            em.store.latest(plan_id)
+            biz = em.set_business_website(vendor_id, b.url)
+        return out(biz)
+
+    @app.post("/api/plans/<plan_id>/shortlist/<vendor_id>/find-contacts")
+    def shortlist_find_contacts(plan_id, vendor_id):
+        """Read the business's own website for public email addresses. Found addresses are candidates; none is used until you confirm it."""
+        plan_id, vendor_id = pid(plan_id), pid(vendor_id)
+        body(EmptyBody)
+        with lock:
+            em.store.latest(plan_id)
+            res = em.find_business_contacts(vendor_id)
+        return out(res)
+
+    @app.post("/api/plans/<plan_id>/shortlist/<vendor_id>/contacts/<candidate_id>/confirm")
+    def shortlist_confirm(plan_id, vendor_id, candidate_id):
+        plan_id, vendor_id, candidate_id, b = pid(plan_id), pid(vendor_id), pid(candidate_id), body(ConfirmContactBody)
+        with lock:
+            em.store.latest(plan_id)
+            contact = em.confirm_contact(vendor_id, candidate_id, b.by, b.edited_value)
+        return out(contact, 201)
+
+    @app.post("/api/plans/<plan_id>/shortlist/<vendor_id>/contacts/<candidate_id>/reject")
+    def shortlist_reject(plan_id, vendor_id, candidate_id):
+        plan_id, vendor_id, candidate_id = pid(plan_id), pid(vendor_id), pid(candidate_id)
+        body(EmptyBody)
+        with lock:
+            em.store.latest(plan_id)
+            cand = em.reject_contact(vendor_id, candidate_id)
+        return out(cand)
+
+    @app.post("/api/plans/<plan_id>/shortlist/test-vendor")
+    def shortlist_test_vendor(plan_id):
+        """A vendor whose address is yours, for testing. It needs your statement that you own the address and is labelled TEST VENDOR everywhere."""
+        plan_id, b = pid(plan_id), body(TestVendorBody)
+        with lock:
+            plan = em.store.latest(plan_id)
+            biz, _ = em.add_test_vendor(b.name, b.city or plan.request.city, b.category, b.email, b.owns_address, b.by, plan_id)
+            item = next(i for i in em.shortlist_view(plan_id) if i.business.vendor_id == biz.vendor_id)
+        return out(item, 201)
+
+    @app.get("/api/vendors/directory")
+    def vendor_directory():
+        with lock:
+            return jsonify(em.vendor_directory())
+
+    @app.get("/api/vendors/labels")
+    def vendor_labels():
+        with lock:
+            return jsonify(em.vendor_labels())
+
+    @app.get("/api/suppressions")
+    def suppressions_get():
+        """The do-not-contact list: one entry per address, covering every plan and job."""
+        with lock:
+            items = em.suppression_list()
+        return jsonify([{**json.loads(s.model_dump_json()), "active": s.active, "note": note} for s, note in items])
+
+    @app.post("/api/suppressions")
+    def suppressions_add():
+        b = body(SuppressBody)
+        with lock:
+            s = em.suppress_address(b.channel, b.value, b.by, b.note)
+        return out(s, 201)
+
+    @app.post("/api/suppressions/<suppression_id>/lift")
+    def suppressions_lift(suppression_id):
+        """Only you can lift one, and the record says who and why."""
+        suppression_id, b = pid(suppression_id), body(LiftBody)
+        with lock:
+            s = em.lift_suppression(suppression_id, b.by, b.reason)
+        return out(s)
+
+    @app.get("/api/unmatched")
+    def unmatched_get():
+        """Stop-like mail and delivery failures that are not tied to anything we sent. They change nothing until you decide."""
+        with lock:
+            items = em.unmatched_messages()
+        return jsonify([json.loads(m.model_dump_json()) for m in items])
+
+    @app.post("/api/unmatched/<message_id>/dismiss")
+    def unmatched_dismiss(message_id):
+        message_id = pid(message_id)
+        body(EmptyBody)
+        with lock:
+            m = em.dismiss_unmatched(message_id)
+        return out(m)
+
+    @app.post("/api/unmatched/<message_id>/suppress")
+    def unmatched_suppress(message_id):
+        message_id, b = pid(message_id), body(ByBody)
+        with lock:
+            s = em.suppress_unmatched(message_id, b.by)
+        return out(s, 201)
 
     @app.get("/api/community/profiles")
     def community_profiles():

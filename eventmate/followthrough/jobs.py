@@ -66,7 +66,7 @@ class UserItem(_M):
     """Something only the user can decide. The job waits until every open item is resolved."""
 
     item_id: str
-    kind: Literal["confirm_claim", "vendor_question", "approve_requests", "approve_nudge", "check_unknown_send", "unclear_price", "vendor_unavailable", "no_quotes_possible", "different_sender"]
+    kind: Literal["confirm_claim", "vendor_question", "approve_requests", "approve_nudge", "check_unknown_send", "unclear_price", "vendor_unavailable", "no_quotes_possible", "different_sender", "do_not_contact"]
     vendor_id: str = ""
     text: str = Field(max_length=600)
     ref: str = ""  # claim_id, message_id or draft_id

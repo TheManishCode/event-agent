@@ -33,3 +33,12 @@ Deals are leads: advertised prices from public pages, flagged when unusually low
 Check everything at once: `python -m eventmate.smoke` (free sources only) or `python -m eventmate.smoke --llm` (also pings the model providers; a few credits). Tests never call a keyed service.
 
 Vendor messaging settings are in [EMAIL_SETUP.md](EMAIL_SETUP.md). Community profiles and idea templates are data files under `eventmate/data/`; set `EVENTMATE_COMMUNITY_PROFILES` to use another profiles file.
+
+## Finding vendors
+| Source | Covers | Needs |
+|---|---|---|
+| OpenStreetMap (Overpass) | venues only | nothing; optional `EVENTMATE_OVERPASS_URL` |
+| Google Places | venues, caterers, photographers | `GOOGLE_PLACES_API_KEY`. A shortlist search also requests `places.websiteUri` and `places.id`, which Google bills at a higher tier than the base fields; this has not been run against a live key |
+
+Contact addresses are read only from a business's own website (the listing's, or one you type) and at most one same-domain contact page, honouring robots.txt. Found addresses are never used until you confirm them. Business addresses and the do-not-contact list are stored in the plan directory (`sourcing` data: `externals/`, `shortlist/`, `suppression/`, `unmatched/`) with no retention or deletion rules yet.
+

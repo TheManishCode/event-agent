@@ -70,11 +70,11 @@ def _urllib_transport(url: str, query: str, timeout: float) -> bytes:
 
 def _opt(model, **fields):
     """Build a candidate, dropping only the optional fields that fail validation rather than trusting them."""
-    for key in ("street", "city", "website", "capacity_tagged"):
+    for key in ("street", "city", "website", "capacity_tagged", "email"):
         if fields.get(key) is None:
             continue
         try:
-            model(**{**fields, **{k: None for k in ("street", "city", "website", "capacity_tagged") if k != key}})
+            model(**{**fields, **{k: None for k in ("street", "city", "website", "capacity_tagged", "email") if k != key}})
         except ValueError:
             fields[key] = None
     return model(**fields)
@@ -146,7 +146,8 @@ class OverpassSource:
             try:
                 out.append(_opt(
                     VenueCandidate, osm_ref=ref, name=name.strip()[:120], kind=kind, lat=at["lat"], lon=at["lon"],
-                    street=tags.get("addr:street"), city=tags.get("addr:city"), website=tags.get("website"),
+                    street=tags.get("addr:street"), city=tags.get("addr:city"), website=tags.get("website") or tags.get("contact:website"),
+                    email=tags.get("contact:email") or tags.get("email"),
                     capacity_tagged=int(cap) if isinstance(cap, str) and cap.isdigit() else None,
                 ))
             except (KeyError, TypeError, ValueError):

@@ -18,12 +18,21 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
+from eventmate.sourcing.suppression import SuppressionStore, UnmatchedStore, normalise_address
 from eventmate.messaging.channels import Channel, ChannelError, Inbound, KnownThread, OutcomeUnknown, ThreadRef
 from eventmate.integrations.deals import extract_mentions
 from eventmate.messaging.outreach import OutreachStore
 from eventmate.schemas import (
     AmountMention, AutoreplyStatus, ConversationThread, Inbox, InboundMessage, Mandate, OutreachDraft, PlanVersion, PollResult, ReplyAnalysis,
 )
+
+def _address_key(channel: str, value: str) -> str:
+    """The normalised address, or the lower-cased text if it is not a valid address (so a bad value never raises inside the poll loop)."""
+    try:
+        return normalise_address(channel, value)
+    except ValueError:
+        return (value or "").strip().casefold()
+
 
 LEASE = timedelta(minutes=5)  # a send claimed longer ago than this and never finished is recorded as unknown
 LOOKBACK = timedelta(days=30)  # threads older than this are no longer polled
@@ -95,6 +104,8 @@ class ConversationService:
     ):
         self.store, self.channels, self.plan_lookup, self.policy, self.now = store, channels, plan_lookup, policy, now
         self._last_whatsapp: Optional[datetime] = None
+        self.suppressions: Optional[SuppressionStore] = None  # set by EventMate: the do-not-contact list, checked at approval and again when a message is about to be sent
+        self.unmatched: Optional[UnmatchedStore] = None  # set by EventMate: stop-like mail and bounces that are not tied to anything we sent, for the user to review
         self.guards: List[Callable[[OutreachDraft], Optional[str]]] = []  # each may veto an automatic send at dispatch time (for example: its job was cancelled)
 
     # ------------------------------------------------------------ approval
@@ -110,6 +121,10 @@ class ConversationService:
             return d  # approving twice never sends twice
         if d.status != "prepared":
             raise ValueError(f"This draft is {d.status}; write a new one.")
+        blocked = self.blocked_reason(d)
+        if blocked:
+            self.store.transition(plan_id, draft_id, ("prepared",), status="blocked", error=blocked[:300])
+            raise ValueError(f"Blocked: do not contact. {blocked}")
         if d.expires_at is not None and d.expires_at <= self.now():
             self.store.transition(plan_id, draft_id, ("prepared",), status="expired", decided_at=self.now())
             raise ValueError("This approval expired. Write a fresh draft.")
@@ -141,6 +156,10 @@ class ConversationService:
                     self.store.transition(pid, d.draft_id, ("sending",), status="outcome_unknown", error="the app stopped while sending; check the vendor chat before trying again")
         for pid in self.store.plan_ids():
             for d in [x for x in self.store.list(pid) if x.status == "approved"]:
+                blocked = self.blocked_reason(d)  # checked now, not when it was queued: a suppression added since then stops it
+                if blocked:
+                    self.store.transition(pid, d.draft_id, ("approved",), status="blocked", error=blocked[:300])
+                    continue
                 if d.approved_by == "mandate":
                     veto = next((why for why in (g(d) for g in self.guards) if why), None)
                     if veto:
@@ -218,8 +237,14 @@ class ConversationService:
                 errors.append(f"{name}: {exc}")
                 continue
             for item in inbound:
+                if item.bounce is not None:
+                    self._handle_bounce(item, sent_drafts)
+                    ignored += 1
+                    continue
                 match = self._match(item, [(pid, d) for pid, d in sent_drafts if d.channel == name])
                 if match is None:
+                    if self.unmatched is not None and analyze_reply(item.body, ()).asks_to_stop:
+                        self.unmatched.add(item.channel, item.sender, item.received_at, item.external_id, "stop_like", item.body)  # not tied to anything we sent: shown to the user, changes nothing
                     ignored += 1
                     continue
                 stored = self._store(item, *match)
@@ -248,13 +273,58 @@ class ConversationService:
     def _store(self, item: Inbound, pid: str, d: OutreachDraft) -> Optional[InboundMessage]:
         checklist = self.store.checklists.get(d.category.value, ())
         msg = InboundMessage(
-            message_id=uuid.uuid4().hex, plan_id=pid, draft_id=d.parent_id or d.draft_id, vendor_id=d.vendor_id, vendor_name=d.vendor_name, category=d.category,
+            message_id=uuid.uuid4().hex, plan_id=pid, draft_id=d.parent_id or d.draft_id, vendor_id=d.vendor_id, vendor_name=d.vendor_name, vendor_origin=d.vendor_origin, category=d.category,
             channel=item.channel, sender=item.sender, received_at=item.received_at, external_id=item.external_id, body=item.body, truncated=item.truncated,
             attachments=item.attachments, analysis=analyze_reply(item.body, checklist),
-            sender_differs=item.channel == "email" and item.sender.lower() != d.recipient.lower(),
+            sender_differs=item.channel == "email" and _address_key(item.channel, item.sender) != _address_key(item.channel, d.recipient),
             auto_handled=not self.autoreply_status(pid).active,  # a reply that arrives while no permission is active can never be answered automatically later
         )
-        return self.store.add_inbound(msg)
+        stored = self.store.add_inbound(msg)
+        if stored is not None and stored.analysis.asks_to_stop:
+            if stored.sender_differs:  # right thread, wrong address: anyone could have written it, so it adds nothing; the user reads it
+                if self.unmatched is not None:
+                    self.unmatched.add(item.channel, item.sender, item.received_at, item.external_id, "stop_like", item.body)
+            elif self.suppressions is not None:  # the address we wrote to asked us to stop
+                self.suppressions.add(d.channel, d.recipient, "stop_request", stored.message_id, "system: stop request in a matched reply")
+                self.apply_block(d.channel, d.recipient)
+        return stored
+
+    # ------------------------------------------------------------ do not contact
+
+    def blocked_reason(self, d: OutreachDraft) -> Optional[str]:
+        if self.suppressions is None:
+            return None
+        s = self.suppressions.active_for(d.channel, d.recipient)
+        if s is None:
+            return None
+        return {"stop_request": "They asked us to stop.", "bad_address": "Earlier mail to this address could not be delivered.", "user": "You marked this address do-not-contact."}[s.reason]
+
+    def apply_block(self, channel: str, value: str) -> int:
+        """A new suppression stops every draft to that address that has not been sent, on every plan and in every job."""
+        n = 0
+        for pid in self.store.plan_ids():
+            for d in self.store.list(pid):
+                if d.status in ("prepared", "approved") and d.channel == channel and _address_key(channel, d.recipient) == _address_key(channel, value):
+                    try:
+                        self.store.transition(pid, d.draft_id, ("prepared", "approved"), status="blocked", error=(self.blocked_reason(d) or "do not contact")[:300])
+                        n += 1
+                    except ValueError:
+                        continue  # another process claimed or finished it a moment ago; the check at send time covers anything still to go
+        return n
+
+    def _handle_bounce(self, item: Inbound, sent_drafts) -> None:
+        """A delivery failure marks an address bad only if it correlates with a message we sent (its Message-ID, or the recipient) and is permanent."""
+        b = item.bounce
+        key = _address_key("email", b.recipient)
+        hit = next(((pid, d) for pid, d in sent_drafts if d.channel == "email" and ((b.original_message_id and d.external_id == b.original_message_id) or (key and _address_key("email", d.recipient) == key))), None)
+        if hit is None:  # nothing we sent: shown to the user, changes nothing
+            if self.unmatched is not None:
+                self.unmatched.add("email", item.sender, item.received_at, item.external_id, "bounce", item.body)
+            return
+        if not b.permanent or self.suppressions is None:
+            return  # a temporary failure changes nothing
+        self.suppressions.add("email", hit[1].recipient, "bad_address", b.original_message_id or item.external_id, "system: delivery failure notice")
+        self.apply_block("email", hit[1].recipient)
 
     # ------------------------------------------------------------ standing permission (ADR-043)
 
@@ -306,6 +376,9 @@ class ConversationService:
     def queue_automatic(self, pid: str, root: str, text: str, action_key: str) -> Tuple[Optional[OutreachDraft], str]:
         """The one way anything is sent without a per-message approval (ADR-043, ADR-044): checks the standing permission and its caps, marks the
         draft as automatic with the disclosure line, and leaves the rest (window, kill switch, send limits) to dispatch. Returns (draft, reason)."""
+        root_draft = self.store.get(pid, root)
+        if root_draft is not None and self.blocked_reason(root_draft):
+            return None, "do not contact: " + self.blocked_reason(root_draft)
         st = self.autoreply_status(pid)
         if st.killed:
             return None, "the kill switch is on"
@@ -362,6 +435,8 @@ class ConversationService:
                 skipped.append(f"{s.name}: already asked")
             elif c is None:
                 skipped.append(f"{s.name}: no contact saved")
+            elif self.suppressions is not None and self.suppressions.active_for(c.preferred, c.email if c.preferred == "email" else c.whatsapp):
+                skipped.append(f"{s.name}: do not contact")
             else:
                 to = c.email if c.preferred == "email" else "+" + c.whatsapp  # stored as digits; the parser wants the country-code marker
                 made.append(self.store.draft(plan, s.category, c.preferred, to, sender_name))
