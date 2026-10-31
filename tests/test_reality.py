@@ -81,3 +81,33 @@ def test_intake_and_api_carry_the_check(tmp_path):
     bad = client.post("/api/plans", data=json.dumps({"request": EXAMPLE.replace("200,000", "60,000")}), headers=h)
     assert ok.status_code == 201 and ok.get_json()["reality"]["verdict"] == "comfortable"
     assert bad.status_code == 422 and bad.get_json()["reality"]["verdict"] == "unrealistic"
+
+
+# ---- audit finding: "tight" and a suggested minimum said a plan was possible while a service's own share could not pay its cheapest vendor
+
+def test_a_budget_the_check_calls_tight_can_still_need_more_under_the_usual_split(repo):
+    c = check(155_000, repo)
+    assert c.verdict == "tight" and c.minimum_budget_default_split > 155_000 and f"INR {c.minimum_budget_default_split:,}" in c.message and "moved between services" in c.message
+
+
+def test_the_default_split_minimum_is_exact_and_matches_what_the_planner_enforces(tmp_path):
+    em = EventMate(log_dir=tmp_path / "l", plan_dir=tmp_path / "p", run_id="split")
+    c = em.manager.run_intake(EXAMPLE.replace("200,000", "155,000"), today=TODAY).reality
+    m = c.minimum_budget_default_split
+    assert em.plan(EXAMPLE.replace("200,000", f"{m:,}"), today=TODAY).plan is not None, "the minimum must give a plan"
+    below = em.plan(EXAMPLE.replace("200,000", f"{m - 1:,}"), today=TODAY)
+    assert below.plan is None and any(v.constraint in ("category_cap", "budget_cap") for v in below.violations), "one rupee less must fail on a category share"
+
+
+def test_a_comfortable_budget_adds_no_split_warning(repo):
+    c = check(200_000, repo)
+    assert c.verdict == "comfortable" and c.minimum_budget_default_split <= 200_000 and "usual split" not in c.message
+
+
+def test_no_split_minimum_when_a_service_has_no_share(repo):
+    from eventmate.pricing.reality import minimum_budget_default_split
+
+    r = parse_request(EXAMPLE, today=TODAY, known_cities=repo.cities())
+    zero = r.model_copy(update={"cap_weights": ()})
+    pol = BudgetPolicy(weights_bp={"venue": 5000, "caterer": 5000, "photographer": 0})
+    assert minimum_budget_default_split(zero, pol, {c: 1000 for c in r.services}) is None

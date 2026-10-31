@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Dict, Optional, Tuple
 
-from eventmate.agents.budget import BudgetPolicy
+from eventmate.agents.budget import BudgetPolicy, compute_allocation
 from eventmate.agents.vendor import Provider, VendorRepository, evaluate
 from eventmate.schemas import CategoryFloor, EventRequest, RealityCheck, VendorCategory
 
@@ -36,6 +36,30 @@ def _minimum_budget(floor: int, contingency_bp: int) -> int:
     while budget > 1 and (budget - 1) - (budget - 1) * contingency_bp // 10_000 >= floor:
         budget -= 1
     return max(1, budget)
+
+
+def minimum_budget_default_split(request: EventRequest, policy: BudgetPolicy, costs: Dict[VendorCategory, int]) -> Optional[int]:
+    """The least total budget at which every service's share (the cap the planner enforces) is at least its cheapest eligible vendor, with the
+    request's own split. None when a requested service has no share at all. Computed with the planner's own allocation, never estimated."""
+    def holds(total: int) -> bool:
+        lines = compute_allocation(request.model_copy(update={"budget_total": total}), policy).lines
+        return all(line.amount >= costs[line.category] for line in lines)
+
+    try:
+        hi = max(1, sum(costs.values()))
+        while not holds(hi):
+            hi *= 2
+            if hi > 10**10:
+                return None
+    except ValueError:
+        return None
+    lo = 1
+    while lo < hi:  # the smallest total that holds; allocation is monotone apart from one stray rupee, so the walk below settles it exactly
+        mid = (lo + hi) // 2
+        lo, hi = (lo, mid) if holds(mid) else (mid + 1, hi)
+    while lo > 1 and holds(lo - 1):
+        lo -= 1
+    return lo
 
 
 def reality_check(request: EventRequest, repo: VendorRepository, policy: BudgetPolicy) -> RealityCheck:
@@ -66,6 +90,12 @@ def reality_check(request: EventRequest, repo: VendorRepository, policy: BudgetP
         verdict, msg = "tight", f"Tight: the cheapest set (INR {floor:,}) uses {floor * 100 // pool}% of the budget after contingency."
     else:
         verdict, msg = "comfortable", f"Realistic: the cheapest set (INR {floor:,}) uses {floor * 100 // pool}% of the budget after contingency."
+    split_min = minimum_budget_default_split(request, policy, {r.category: r.cost for r in rows})
     if verdict in ("unrealistic", "contingency_breach", "tight"):
-        msg += f" A budget of INR {minimum:,} keeps the contingency reserve intact."
-    return RealityCheck(verdict=verdict, budget=budget, floor=floor, per_category=rows, suggested_minimum_budget=minimum, message=msg, basis=basis)
+        msg += f" A budget of INR {minimum:,} keeps the contingency reserve intact, if money can move between services."
+    if split_min is not None and split_min > budget and verdict != "unrealistic":
+        msg += (f" With the usual split between services (each service gets a fixed share) the plan needs INR {split_min:,}; at INR {budget:,} one service's share is below its"
+                " cheapest vendor, so a plan needs money moved between services.")
+    elif split_min is not None and split_min > minimum and verdict == "unrealistic":
+        msg += f" With the usual split between services the plan needs INR {split_min:,}."
+    return RealityCheck(verdict=verdict, budget=budget, floor=floor, per_category=rows, suggested_minimum_budget=minimum, minimum_budget_default_split=split_min, message=msg, basis=basis)

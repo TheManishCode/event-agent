@@ -626,7 +626,8 @@ class RealityCheck(_Model):
     budget: int = Field(gt=0)
     floor: Optional[int] = Field(default=None, ge=0)
     per_category: Tuple[CategoryFloor, ...] = ()
-    suggested_minimum_budget: Optional[int] = Field(default=None, gt=0)
+    suggested_minimum_budget: Optional[int] = Field(default=None, gt=0)  # the least total that covers the cheapest set and the contingency reserve, if money can move between services
+    minimum_budget_default_split: Optional[int] = Field(default=None, gt=0)  # the least total at which every service's own share (its cap) covers its cheapest eligible vendor
     message: str
     basis: str
     source: str = "tool:reality_check"

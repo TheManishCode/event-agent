@@ -138,7 +138,7 @@ def _budget(ctx: ToolContext, _):
 def _reality(ctx: ToolContext, _):
     p = ctx.em.store.latest(ctx.plan_id)
     rc = reality_check(p.request, ctx.em.repo, ctx.em.manager.budget.policy)
-    return {"verdict": rc.verdict, "message": rc.message, "basis": rc.basis, "floor": rc.floor, "suggested_minimum_budget": rc.suggested_minimum_budget}
+    return {"verdict": rc.verdict, "message": rc.message, "basis": rc.basis, "floor": rc.floor, "suggested_minimum_budget": rc.suggested_minimum_budget, "minimum_budget_default_split": rc.minimum_budget_default_split}
 
 
 # ------------------------------------------------------------ mutating tools
