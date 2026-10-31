@@ -66,6 +66,8 @@ class Bounce:
     permanent: bool  # Action: failed with a 5.x.x status
     recipient: str  # who the notice says it could not deliver to
     original_message_id: str = ""  # the Message-ID of the message that failed, from the returned headers
+    status: str = ""  # the report's Status code, such as 5.1.1
+    diagnostic: str = ""  # the remote server's own words, cleaned and capped; untrusted, shown to the user as such
 
 
 @dataclass(frozen=True)
@@ -298,7 +300,8 @@ def _dsn(msg) -> Optional[Bounce]:
         per_recipient = blocks[1]  # the first block describes the message, the next ones each recipient
         recipient = str(per_recipient.get("Final-Recipient") or per_recipient.get("Original-Recipient") or "").split(";", 1)[-1].strip().strip("<>")[:254]
         action, status = str(per_recipient.get("Action", "")).strip().lower(), str(per_recipient.get("Status", "")).strip()
-        return Bounce(permanent=action == "failed" and status.startswith("5."), recipient=recipient, original_message_id=original)
+        diagnostic = " ".join("".join(c for c in str(per_recipient.get("Diagnostic-Code", "")) if c.isprintable() or c == " ").split())[:200]
+        return Bounce(permanent=action == "failed" and status.startswith("5."), recipient=recipient, original_message_id=original, status=status[:12] if re.fullmatch(r"[245]\.\d{1,3}\.\d{1,3}", status) else "", diagnostic=diagnostic)
     except (ValueError, TypeError, KeyError, LookupError, AttributeError):
         return None
 

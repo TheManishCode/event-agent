@@ -313,17 +313,21 @@ class ConversationService:
         return n
 
     def _handle_bounce(self, item: Inbound, sent_drafts) -> None:
-        """A delivery failure marks an address bad only if it correlates with a message we sent (its Message-ID, or the recipient) and is permanent."""
+        """A permanent delivery failure marks an address bad only if it names the Message-ID of a message we recorded sending. A notice that only names an
+        address we wrote to is not enough (anyone can write one): it goes to the user to review. A matching id is correlation, not proof the notice is genuine."""
         b = item.bounce
-        key = _address_key("email", b.recipient)
-        hit = next(((pid, d) for pid, d in sent_drafts if d.channel == "email" and ((b.original_message_id and d.external_id == b.original_message_id) or (key and _address_key("email", d.recipient) == key))), None)
-        if hit is None:  # nothing we sent: shown to the user, changes nothing
+        hit = next(((pid, d) for pid, d in sent_drafts if d.channel == "email" and b.original_message_id and d.external_id == b.original_message_id), None)
+        if hit is None:  # not a message we sent: shown to the user, changes nothing
             if self.unmatched is not None:
-                self.unmatched.add("email", item.sender, item.received_at, item.external_id, "bounce", item.body)
+                key = _address_key("email", b.recipient)
+                names_ours = bool(key) and any(d.channel == "email" and _address_key("email", d.recipient) == key for _, d in sent_drafts)
+                note = " It names an address we wrote to but not a message we sent, so it was not acted on." if names_ours else ""
+                self.unmatched.add("email", item.sender, item.received_at, item.external_id, "bounce", (item.body + "." + note)[:1000])
             return
         if not b.permanent or self.suppressions is None:
             return  # a temporary failure changes nothing
-        self.suppressions.add("email", hit[1].recipient, "bad_address", b.original_message_id or item.external_id, "system: delivery failure notice")
+        detail = (f"{b.status}: {b.diagnostic}" if b.status and b.diagnostic else b.status or b.diagnostic or "permanent failure, no reason given")[:300]
+        self.suppressions.add("email", hit[1].recipient, "bad_address", b.original_message_id or item.external_id, "system: delivery failure notice", detail)
         self.apply_block("email", hit[1].recipient)
 
     # ------------------------------------------------------------ standing permission (ADR-043)

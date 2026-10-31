@@ -13,7 +13,7 @@ from eventmate.messaging.channels import Inbound
 from eventmate.messaging.conversations import SendPolicy
 from eventmate.schemas import Suppression, VendorCategory as C
 from eventmate.service import EventMate
-from eventmate.sourcing.suppression import domain_note, normalise_address
+from eventmate.sourcing.suppression import NeedsAcknowledgement, domain_note, normalise_address
 from tests.conftest import TODAY
 from tests.mailfake import MailWorld
 from tests.test_conversations import Clock, FakeChannel
@@ -288,12 +288,17 @@ def test_a_permanent_failure_that_matches_a_message_we_sent_marks_the_address_ba
     assert e.unmatched_messages() == []
 
 
-def test_a_failure_that_names_our_recipient_without_the_message_id_still_correlates(mail):
+def test_a_failure_that_names_our_recipient_but_not_a_message_we_sent_goes_to_review_and_blocks_nothing(mail):
+    """A crafted notice can name any vendor we wrote to. Only a Message-ID we recorded counts as correlation; the recipient alone does not."""
     e, w, pid = mail
-    request(e, pid, business(e))
+    biz = business(e)
+    request(e, pid, biz)
     w.bounce(ADDR, original_message_id="<not-ours@elsewhere>", with_original="headers")
+    w.bounce(ADDR, original_message_id="", with_original="none")  # no returned headers at all
     e.poll_conversations()
-    assert e.suppressions.active_for("email", ADDR).reason == "bad_address"
+    assert e.suppressions.all() == [] and e.draft_outreach(pid, C.CATERER, "email", ADDR, "Asha", vendor_id=biz.vendor_id).status == "prepared"
+    shown = e.unmatched_messages()
+    assert len(shown) == 2 and all(m.kind == "bounce" and "names an address we wrote to but not a message we sent" in m.body for m in shown)
 
 
 def test_a_failure_that_matches_our_message_id_for_a_differently_spelled_recipient_correlates(mail):
@@ -303,6 +308,76 @@ def test_a_failure_that_matches_our_message_id_for_a_differently_spelled_recipie
     w.bounce("someone-else@forwarded.example", original_message_id=orig)
     e.poll_conversations()
     assert e.suppressions.active_for("email", ADDR).reason == "bad_address"
+
+
+def test_the_bounce_reason_is_kept_as_the_remote_servers_words_cleaned_and_capped(mail):
+    e, w, pid = mail
+    request(e, pid, business(e))
+    w.bounce(ADDR, status="5.1.1", diagnostic="smtp; 550 5.1.1 The email account that you tried to reach does not exist <script>x</script>" + " x" * 400)
+    e.poll_conversations()
+    s = e.suppressions.active_for("email", ADDR)
+    assert s.detail.startswith("5.1.1: ") and "does not exist" in s.detail and len(s.detail) <= 300 and "\n" not in s.detail and "\x00" not in s.detail
+
+
+def test_a_forged_but_well_formed_notice_naming_a_real_message_id_is_still_only_as_trustworthy_as_the_id(mail):
+    """Honest limit, pinned as a test: whoever received our message knows its id, so a matching id is correlation and not proof the notice is genuine.
+    The effect is bounded: it can only stop us writing to an address we already wrote to, it shows its reason, and only the user lifts it."""
+    e, w, pid = mail
+    biz = business(e)
+    request(e, pid, biz)
+    w.bounce(ADDR, original_message_id=str(w.last_to(ADDR)["Message-ID"]), sender="forger@elsewhere.example")
+    e.poll_conversations()
+    s = e.suppressions.active_for("email", ADDR)
+    assert s is not None and s.created_by == "system: delivery failure notice" and s.detail
+    assert e.suppressions.active_for("email", "other@sharma-caterers.example") is None  # bounded to the one address
+
+
+# ---- the reason is shown before an address can be re-enabled
+
+def bad(mail, detail_status="5.1.1", diagnostic="smtp; 550 mailbox unavailable"):
+    e, w, pid = mail
+    biz = business(e)
+    request(e, pid, biz)
+    w.bounce(ADDR, status=detail_status, diagnostic=diagnostic)
+    e.poll_conversations()
+    return e, w, pid, biz
+
+
+def test_lifting_a_bad_address_needs_the_user_to_have_seen_the_reason(mail):
+    e, w, pid, biz = bad(mail)
+    s = e.suppressions.active_for("email", ADDR)
+    with pytest.raises(NeedsAcknowledgement) as exc:
+        e.lift_suppression(s.suppression_id, "Asha", "checked with them")
+    assert "5.1.1" in str(exc.value) and "mailbox unavailable" in str(exc.value) and "remote mail server" in str(exc.value) and exc.value.reason == s.detail
+    assert e.is_suppressed("email", ADDR) is not None
+    assert not e.lift_suppression(s.suppression_id, "Asha", "checked with them", acknowledge_reason=True).active
+
+
+def test_re_confirming_a_bad_address_needs_the_reason_to_be_acknowledged_but_a_different_address_does_not(mail):
+    e, w, pid, biz = bad(mail)
+    fresh = e.shortlist.add_candidates(biz.vendor_id, [{"channel": "email", "value": "billing@sharma-caterers.example", "source_url": SRC, "source_kind": "page_text", "flags": ()}])[0]
+    with pytest.raises(NeedsAcknowledgement, match="5.1.1"):
+        e.confirm_contact(biz.vendor_id, fresh.candidate_id, "Asha", edited_value=ADDR)  # typing the bounced address back
+    assert e.is_suppressed("email", ADDR) is not None and e.shortlist.get_candidate(fresh.candidate_id).status == "found"
+    assert e.confirm_contact(biz.vendor_id, fresh.candidate_id, "Asha", edited_value=ADDR, acknowledge_bounce=True).email == ADDR
+    assert e.is_suppressed("email", ADDR) is None
+    other = e.shortlist.add_candidates(biz.vendor_id, [{"channel": "email", "value": "x3@sharma-caterers.example", "source_url": SRC, "source_kind": "page_text", "flags": ()}])[0]
+    assert e.confirm_contact(biz.vendor_id, other.candidate_id, "Asha").email == "x3@sharma-caterers.example"  # nothing to acknowledge
+
+
+def test_a_stop_request_or_a_users_own_entry_needs_no_acknowledgement_to_lift(em):
+    s = em.suppress_address("email", "x@shop.example", "Asha", "asked by phone")
+    assert not em.lift_suppression(s.suppression_id, "Asha", "fine now").active
+
+
+def test_the_api_returns_the_reason_with_a_conflict_and_the_list_shows_it(mail):
+    e, w, pid, biz = bad(mail, diagnostic="smtp; 550 no such user")
+    c = create_app(e, today_fn=lambda: TODAY, poll_seconds=0).test_client()
+    listed = c.get("/api/suppressions").get_json()[0]
+    assert listed["reason"] == "bad_address" and "no such user" in listed["detail"] and listed["detail"].startswith("5.1.1")
+    r = post(c, f"/api/suppressions/{listed['suppression_id']}/lift", {"by": "Asha", "reason": "checked"})
+    assert r.status_code == 409 and r.get_json()["needs_acknowledgement"] is True and "no such user" in r.get_json()["reason"]
+    assert post(c, f"/api/suppressions/{listed['suppression_id']}/lift", {"by": "Asha", "reason": "checked", "acknowledge_reason": True}).status_code == 200
 
 
 def test_a_temporary_failure_changes_nothing(mail):
@@ -349,7 +424,7 @@ def test_re_confirming_or_editing_the_contact_clears_a_bad_address_but_never_a_s
     cand = e.shortlist.add_candidates(biz.vendor_id, [{"channel": "email", "value": ADDR, "source_url": SRC, "source_kind": "page_text", "flags": ()}])
     assert cand == []  # the same address is not offered twice; the user re-confirms by editing the confirmation of a fresh candidate
     fresh = e.shortlist.add_candidates(biz.vendor_id, [{"channel": "email", "value": "billing@sharma-caterers.example", "source_url": SRC, "source_kind": "page_text", "flags": ()}])[0]
-    e.confirm_contact(biz.vendor_id, fresh.candidate_id, "Asha", edited_value=ADDR)  # the user types the same address back: they re-confirm it
+    e.confirm_contact(biz.vendor_id, fresh.candidate_id, "Asha", edited_value=ADDR, acknowledge_bounce=True)  # the user types the same address back, having seen why it bounced
     lifted = [s for s in e.suppressions.all() if s.reason == "bad_address"][0]
     assert not lifted.active and lifted.lifted_by == "Asha" and "re-confirmed" in lifted.lift_reason and e.is_suppressed("email", ADDR) is None
     e.suppress_address("email", ADDR, "Asha", "stop by phone")

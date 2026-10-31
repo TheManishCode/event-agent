@@ -3,8 +3,10 @@
 A suppression is about an address on a channel, not about a vendor, a job or a plan: one entry covers every job, every plan and every business record
 that resolves to the same address, and it is checked when a message is about to be sent, so a draft that was queued or approved earlier is stopped too.
 
-What may add one: a stop request in a reply that was tied to a message we sent (same thread and the address we wrote to), a delivery failure that
-correlates with a message we sent, or the user. A message from anyone else, or one that only mentions stopping, adds nothing: it goes to the user to
+What may add one: a stop request in a reply that was tied to a message we sent (the thread headers and the address we wrote to), a permanent delivery failure
+that names the Message-ID of a message we sent, or the user. None of this is authentication: thread headers, sender addresses and Message-IDs can all be
+forged by someone who has received our mail. The effect of a forgery is bounded (it can only stop us writing to an address we already wrote to), it is
+shown with its reason, and only the user lifts it. A message from anyone else, or one that only mentions stopping, adds nothing: it goes to the user to
 review. Only the user can lift a suppression, and the lift records who and why.
 """
 
@@ -52,6 +54,17 @@ def domain_note(channel: str, value: str) -> str:
     return f"covers this address only; other addresses at {domain} are not blocked"
 
 
+class NeedsAcknowledgement(ValueError):
+    """Re-enabling an address that bounced needs the user to have read why. Carries the reason so a caller can show it."""
+
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(
+            f"This address could not be delivered to earlier ({reason or 'no reason was given'}). That is the remote mail server's own wording and was not verified. "
+            "Check the address, then confirm that you have read the reason."
+        )
+
+
 class _SuppressionFile(JsonlLog[Suppression]):
     channel = "suppression"
     model = Suppression
@@ -84,17 +97,17 @@ class SuppressionStore:
             return None
         return next((s for s in self.all() if s.active and s.channel == channel and s.value == key), None)
 
-    def add(self, channel: str, value: str, reason: str, source_ref: str, created_by: str) -> Suppression:
+    def add(self, channel: str, value: str, reason: str, source_ref: str, created_by: str, detail: str = "") -> Suppression:
         key = normalise_address(channel, value)
         with self._lock():
             have = self.active_for(channel, key)
             if have is not None:
                 return have  # one suppression per address: a second stop request changes nothing
-            s = Suppression(suppression_id=uuid.uuid4().hex, channel=channel, value=key, reason=reason, source_ref=source_ref[:400], created_at=self.now(), created_by=created_by[:80])
+            s = Suppression(suppression_id=uuid.uuid4().hex, channel=channel, value=key, reason=reason, source_ref=source_ref[:400], detail=detail[:300], created_at=self.now(), created_by=created_by[:80])
             return self._file()._append(s, s.suppression_id)
 
-    def lift(self, suppression_id: str, by: str, reason: str) -> Suppression:
-        """Only a person lifts a suppression, and the record says who and why."""
+    def lift(self, suppression_id: str, by: str, reason: str, acknowledge_reason: bool = False) -> Suppression:
+        """Only a person lifts a suppression, and the record says who and why. A bad address also needs them to have read the failure reason."""
         if not (by or "").strip() or not (reason or "").strip():
             raise ValueError("say who is lifting it and why")
         with self._lock():
@@ -103,13 +116,15 @@ class SuppressionStore:
                 raise ValueError(f"unknown suppression {suppression_id!r}")
             if not cur.active:
                 return cur
+            if cur.reason == "bad_address" and acknowledge_reason is not True:
+                raise NeedsAcknowledgement(cur.detail)
             new = Suppression.model_validate({**cur.model_dump(), "lifted_at": self.now(), "lifted_by": by.strip()[:80], "lift_reason": reason.strip()[:200]})
             return self._file()._append(new, suppression_id)
 
-    def lift_bad_address(self, channel: str, value: str, by: str, reason: str) -> Optional[Suppression]:
-        """A bad address is cleared when the user edits or re-confirms the contact. A stop request or the user's own entry is never cleared this way."""
+    def lift_bad_address(self, channel: str, value: str, by: str, reason: str, acknowledge_reason: bool = False) -> Optional[Suppression]:
+        """A bad address is cleared when the user edits or re-confirms the contact, having read why it failed. A stop request or the user's own entry is never cleared this way."""
         cur = self.active_for(channel, value)
-        return self.lift(cur.suppression_id, by, reason) if cur is not None and cur.reason == "bad_address" else None
+        return self.lift(cur.suppression_id, by, reason, acknowledge_reason) if cur is not None and cur.reason == "bad_address" else None
 
 
 class UnmatchedStore:

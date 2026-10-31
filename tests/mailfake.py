@@ -94,21 +94,22 @@ class MailWorld:
         return mid
 
 
-def _dsn(world, address, *, permanent=True, original_message_id=None, status=None, action=None, with_original="headers", sender="MAILER-DAEMON@googlemail.com"):
+def _dsn(world, address, *, permanent=True, original_message_id=None, status=None, action=None, with_original="headers", sender="MAILER-DAEMON@googlemail.com", diagnostic="smtp; 550 {status} user unknown"):
     world._n += 1
     sent = [m for m in world.outbox if m["To"] == address]
     orig = original_message_id if original_message_id is not None else (str(sent[-1]["Message-ID"]) if sent else "<unknown@elsewhere.test>")
+    id_line = f"Message-ID: {orig}\n" if orig else ""
     status = status or ("5.1.1" if permanent else "4.2.2")
     action = action or ("failed" if permanent else "delayed")
     original = (
-        f"--B\nContent-Type: text/rfc822-headers\n\nMessage-ID: {orig}\nFrom: {CFG.from_addr}\nTo: {address}\nSubject: Quote request\n\n" if with_original == "headers"
+        f"--B\nContent-Type: text/rfc822-headers\n\n{id_line}From: {CFG.from_addr}\nTo: {address}\nSubject: Quote request\n\n" if with_original == "headers"
         else f"--B\nContent-Type: message/rfc822\n\nMessage-ID: {orig}\nFrom: {CFG.from_addr}\nTo: {address}\nSubject: Quote request\n\nbody\n\n" if with_original == "message" else ""
     )
     raw = (
         f"From: {sender}\nTo: {CFG.from_addr}\nSubject: Delivery Status Notification (Failure)\nDate: {email.utils.format_datetime(world.clock() + timedelta(minutes=2))}\n"
         f"Message-ID: <dsn-{world._n}@googlemail.com>\nMIME-Version: 1.0\nContent-Type: multipart/report; report-type=delivery-status; boundary=\"B\"\n\n"
         f"--B\nContent-Type: text/plain; charset=utf-8\n\nYour message could not be delivered.\n\n"
-        f"--B\nContent-Type: message/delivery-status\n\nReporting-MTA: dns; googlemail.com\n\nFinal-Recipient: rfc822; {address}\nAction: {action}\nStatus: {status}\nDiagnostic-Code: smtp; 550 {status} user unknown\n\n"
+        f"--B\nContent-Type: message/delivery-status\n\nReporting-MTA: dns; googlemail.com\n\nFinal-Recipient: rfc822; {address}\nAction: {action}\nStatus: {status}\nDiagnostic-Code: {diagnostic.format(status=status)}\n\n"
         f"{original}--B--\n"
     )
     world.inbox.append(raw.encode())

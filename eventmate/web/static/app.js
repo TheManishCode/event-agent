@@ -903,6 +903,8 @@
       for (const c of it.candidates.filter((x) => x.status === "found")) {
         const edit = el("input", { class: "input cand-value", maxlength: "254", value: c.value, "aria-label": "Address to confirm" });
         const who = el("input", { class: "input", maxlength: "60", placeholder: "Your name", "aria-label": "Your name", value: state.senderName || "" });
+        const ackHolder = el("span", {});
+        let ackBox = null;
         row.append(el("div", { class: "alt cand", "data-candidate": c.candidate_id },
           el("div", { class: "muted" }, `Found ${c.source_kind === "page_mailto" ? "as a mail link" : c.source_kind === "page_text" ? "in the page text" : "in the listing"} on `, el("a", { href: c.source_url, target: "_blank", rel: "noopener noreferrer nofollow", text: c.source_url })),
           ...c.flags.map((f) => el("div", { class: "bad", text: "! " + f })),
@@ -910,9 +912,15 @@
             el("button", { class: "btn primary small confirm-cand", type: "button", text: "Confirm this address", on: { click: async () => {
               if (!who.value.trim()) { msg.textContent = "Enter your name: the record says who confirmed it."; return; }
               const body = { by: who.value.trim() }; if (edit.value.trim() !== c.value) body.edited_value = edit.value.trim();
+              if (ackBox && ackBox.checked) body.acknowledge_bounce = true;
               const r = await api(`${planBase}/shortlist/${b.vendor_id}/contacts/${c.candidate_id}/confirm`, { method: "POST", body });
-              if (r.ok) again(); else fail(r, "That address was refused.");
+              if (r.ok) { again(); return; }
+              if (r.data && r.data.needs_acknowledgement && !ackBox) {  // this address bounced before: show why, and ask for a second, informed click
+                ackBox = el("input", { type: "checkbox", class: "ack-bounce", "aria-label": "I have read why it bounced" }); ackHolder.append(ackBox, " I have read why it bounced");
+              }
+              fail(r, "That address was refused.");
             } } }),
+            ackHolder,
             el("button", { class: "btn small reject-cand", type: "button", text: "Not theirs", on: { click: async () => { const r = await api(`${planBase}/shortlist/${b.vendor_id}/contacts/${c.candidate_id}/reject`, { method: "POST", body: {} }); if (r.ok) again(); else fail(r, "Could not reject it."); } } }))));
       }
       if (it.contact) {
@@ -956,13 +964,16 @@
   function suppressionView(list, unmatched, ctx) {
     const { again, fail } = ctx;
     const box = el("section", { class: "alt", id: "dnc" }, el("b", { text: "Do not contact" }),
-      el("p", { class: "muted", text: "One entry covers an address on every plan and job, and stops drafts that were already queued. A stop request in a reply to us, or a permanent delivery failure for a message we sent, adds an entry. Only you can lift one." }));
+      el("p", { class: "muted", text: "One entry covers an address on every plan and job, and stops drafts that were already queued. A stop request in a reply to a message we sent, or a permanent delivery failure that names a message we sent, adds an entry. Neither is authenticated: mail headers can be forged, so read anything that surprises you. A forgery can only stop us writing to an address we already wrote to, and only you can lift an entry." }));
     for (const s of list.filter((x) => x.active)) {
       const why = el("input", { class: "input", maxlength: "200", placeholder: "Why it is lifted", "aria-label": "Reason" });
       const by = el("input", { class: "input", maxlength: "80", placeholder: "Your name", "aria-label": "Your name", value: state.senderName || "" });
+      const bounced = s.reason === "bad_address";
+      const ack = bounced ? el("input", { type: "checkbox", class: "ack-reason", "aria-label": "I have read why it failed" }) : null;
       box.append(el("div", { class: "alt sup", "data-sup": s.suppression_id }, el("b", { text: s.value }), " ", el("span", { class: "tag rej", text: s.reason.replace("_", " ") }), el("div", { class: "muted", text: `${s.note}. Added by ${s.created_by}.` }),
-        el("div", { class: "actions" }, why, by, el("button", { class: "btn small lift", type: "button", text: "Lift", on: { click: async () => {
-          const r = await api(`/api/suppressions/${s.suppression_id}/lift`, { method: "POST", body: { by: by.value.trim(), reason: why.value.trim() } }); if (r.ok) again(); else fail(r, "Say who is lifting it and why.");
+        s.detail ? el("div", { class: "bad sup-detail", text: `Why it failed: ${s.detail} (the remote mail server's own words, not verified)` }) : null,
+        el("div", { class: "actions" }, why, by, ack ? el("label", { class: "muted" }, ack, " I have read why it failed") : null, el("button", { class: "btn small lift", type: "button", text: "Lift", on: { click: async () => {
+          const r = await api(`/api/suppressions/${s.suppression_id}/lift`, { method: "POST", body: { by: by.value.trim(), reason: why.value.trim(), acknowledge_reason: !!(ack && ack.checked) } }); if (r.ok) again(); else fail(r, "Say who is lifting it and why.");
         } } }))));
     }
     if (!list.some((x) => x.active)) box.append(el("p", { class: "muted", text: "No addresses are on the list." }));

@@ -925,3 +925,62 @@ def test_find_vendors_review_confirm_job_stop_request_and_test_vendor_in_the_bro
         srv.shutdown()
     assert [x for x in problems if "status of 4" not in x] == []
     assert em.store.latest(pid) == before  # none of this changed the plan
+
+
+def test_a_bounced_address_shows_why_and_cannot_be_lifted_or_reconfirmed_until_the_reason_is_acknowledged(tmp_path):
+    from eventmate.service import EventMate as EM
+    from tests.test_conversations import FakeChannel as FC
+
+    em = EM(log_dir=tmp_path / "l", plan_dir=tmp_path / "p", run_id="bncui", channels={"email": FC("email"), "whatsapp": FC("whatsapp", False, False)}, require_symbolic=False)
+    pid = em.plan("Plan a 150-person college fest in Pune on December 12 under INR 250,000. Venue and catering.", today=TODAY).plan.plan_id
+    from eventmate.schemas import VendorCategory as VC
+
+    biz = em.add_discovered("osm:node/4001", "Sharma Caterers", "Pune", VC.CATERER, "osm", website="https://sharma-caterers.example/")
+    em.shortlist.add_entry(pid, VC.CATERER, biz.vendor_id)
+    em.shortlist.add_candidates(biz.vendor_id, [{"channel": "email", "value": "orders@sharma-caterers.example", "source_url": "https://sharma-caterers.example/contact", "source_kind": "page_mailto", "flags": ()}])
+    em.suppressions.add("email", "orders@sharma-caterers.example", "bad_address", "<m1@x>", "system: delivery failure notice", "5.1.1: smtp; 550 no such user here")
+    em.suppress_address("email", "other@shop.example", "Asha", "asked by phone")
+    srv = make_server("127.0.0.1", 0, create_app(em, today_fn=lambda: TODAY, poll_seconds=0), threaded=True)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    problems = []
+    try:
+        with pw.sync_playwright() as p:
+            browser = p.chromium.launch(executable_path=CHROMIUM, args=["--no-sandbox"])
+            page = browser.new_page(viewport={"width": 1300, "height": 1200})
+            page.on("console", lambda m: problems.append(m.text) if m.type in ("error", "warning") else None)
+            page.goto(f"http://127.0.0.1:{srv.server_port}")
+            page.wait_for_selector("#hero h1", timeout=30000)
+            page.click("#tab-talk")
+            page.wait_for_selector("#dnc .sup", timeout=30000)
+            # confirming the bounced address as a contact: refused with the reason, then allowed after an informed second click
+            cand = page.locator(".cand")
+            page.fill("#o-by", "Asha")
+            cand.locator("input[aria-label='Your name']").fill("Asha")
+            cand.locator(".confirm-cand").click()
+            page.wait_for_selector("#o-msg:has-text('remote mail server')", timeout=30000)
+            assert em.outreach_store.contacts() == {} and cand.locator(".ack-bounce").count() == 1
+            cand.locator(".ack-bounce").check()
+            cand.locator(".confirm-cand").click()
+            page.wait_for_selector("[data-confirmed]", timeout=30000)
+            assert em.is_suppressed("email", "orders@sharma-caterers.example") is None and em.outreach_store.contacts()[biz.vendor_id].email == "orders@sharma-caterers.example"
+            em.suppressions.add("email", "orders@sharma-caterers.example", "bad_address", "<m2@x>", "system: delivery failure notice", "5.1.1: smtp; 550 no such user here")  # it bounces again
+            page.click("#tab-overview")
+            page.click("#tab-talk")
+            page.wait_for_selector("#dnc .sup", timeout=30000)
+            row = page.locator("#dnc .sup", has_text="orders@sharma-caterers.example")
+            assert "Why it failed: 5.1.1: smtp; 550 no such user here" in row.inner_text() and "remote mail server's own words, not verified" in row.inner_text()
+            assert "can be forged" in page.inner_text("#dnc") and "authenticated" in page.inner_text("#dnc") and "Neither is authenticated" in page.inner_text("#dnc")
+            assert page.locator("#dnc .sup", has_text="other@shop.example").locator(".ack-reason").count() == 0  # only an address that bounced asks for it
+            row.locator("input[aria-label='Reason']").fill("they confirmed the mailbox exists")
+            row.locator("input[aria-label='Your name']").fill("Asha")
+            row.locator(".lift").click()
+            page.wait_for_selector("#o-msg:has-text('remote mail server')", timeout=30000)  # refused, with the reason in the message
+            assert em.is_suppressed("email", "orders@sharma-caterers.example") is not None
+            row.locator(".ack-reason").check()
+            row.locator(".lift").click()
+            page.wait_for_selector("#dnc .sup:has-text('orders@sharma-caterers.example')", state="detached", timeout=30000)
+            assert em.is_suppressed("email", "orders@sharma-caterers.example") is None
+            browser.close()
+    finally:
+        srv.shutdown()
+    assert [x for x in problems if "status of 4" not in x] == []

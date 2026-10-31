@@ -9,7 +9,7 @@ Updated by: Claude (discovered vendors, contacts, suppression ADR-049)
 ## Current state
 
 - Package: `eventmate/` (sibling of `src/llm_plan`, which is untouched). Python venv at `.venv`.
-- Tests: `python -m pytest tests` → **1696 passed** (Python 3.14.8, with Fast Downward, VAL and Chromium) (2026-10-31; includes the Chromium end-to-end tests). pyflakes clean.
+- Tests: `python -m pytest tests` → **1706 passed** (Python 3.14.8, with Fast Downward, VAL and Chromium) (2026-10-31; includes the Chromium end-to-end tests). pyflakes clean.
 - Git: this repository (`event-agent`) is the home of the code. Tests live in `tests/`; the package is grouped into `planning`, `pricing`, `messaging`, `followthrough`, `integrations`, `agents`, `assistant`, `web`.
 
 ### Roadmap progress (rows count only with passing tests)
@@ -105,6 +105,8 @@ Roadmap-note repos were checked on 2026-10-30 through the GitHub API **metadata 
 Nearly all have 0-2 stars, so none counts as proven; any borrowing needs a read-through and a licence check first.
 
 ## Session log (newest first)
+
+- 2026-10-31: Review fixes on `feature/discovery-contacts` (ADR-049 amendment): bounce correlation requires a recorded Message-ID (recipient-only goes to review); the bounce reason is stored and must be acknowledged before an address is re-enabled (lift or re-confirm); stop and bounce matching is documented as not authenticated and forgeable.
 
 - 2026-10-31: Discovered vendors (ADR-049) on branch `feature/discovery-contacts` (not pushed, not merged): `ExternalBusiness` identity separate from seed vendors, contact extraction from a business's own pages with provenance, shortlist and search with explicit source coverage, user-confirmed addresses only, a do-not-contact list (matched stop requests, correlated permanent bounces, user), test vendors, a Find vendors UI. Found and fixed on the way: unmatched-sender stop requests could not be reviewed (they were dropped), a draft blocked by a suppression was silently skipped when a job was approved (now a job item). Not verified live: Places `websiteUri`, DSN parsing against a real mail server, any real fetch or send.
 

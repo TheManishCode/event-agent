@@ -2231,6 +2231,7 @@ class Suppression(_Model):
     value: str = Field(min_length=3, max_length=254)  # normalised
     reason: Literal["stop_request", "user", "bad_address"]
     source_ref: str = Field(default="", max_length=400)  # the matched message id, or what the user said
+    detail: str = Field(default="", max_length=300)  # for a bad address: the failure status and the remote server's own words (untrusted, shown as such)
     created_at: datetime
     created_by: str = Field(min_length=1, max_length=80)
     lifted_at: Optional[datetime] = None

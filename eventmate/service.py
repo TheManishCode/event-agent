@@ -41,7 +41,7 @@ from eventmate.followthrough.jobs import JobStore
 from eventmate.sourcing.contacts import find_contacts
 from eventmate.sourcing.externals import ExternalStore, ResolvedVendor, clean_email, slug
 from eventmate.sourcing.search import VendorSearch, clean_name
-from eventmate.sourcing.suppression import SuppressionStore, UnmatchedStore, domain_note
+from eventmate.sourcing.suppression import NeedsAcknowledgement, SuppressionStore, UnmatchedStore, domain_note
 from eventmate.sourcing.shortlist import ShortlistStore
 from eventmate.pricing.ledger import Ledger
 from eventmate.pricing.observations import ObservationStore
@@ -513,7 +513,7 @@ class EventMate:
             raise ValueError(f"that address is already {cand.status}")
         return self.shortlist.update(candidate_id, status="rejected")
 
-    def confirm_contact(self, vendor_id: str, candidate_id: str, by: str, edited_value: Optional[str] = None) -> VendorContact:
+    def confirm_contact(self, vendor_id: str, candidate_id: str, by: str, edited_value: Optional[str] = None, acknowledge_bounce: bool = False) -> VendorContact:
         """The user confirms an address that was found for a discovered business, optionally correcting it. Only this creates its contact."""
         biz = self.externals.get(vendor_id)
         cand = self.shortlist.get_candidate(candidate_id)
@@ -525,12 +525,15 @@ class EventMate:
             raise ValueError("say who confirmed it (a name)")
         value = clean_email(edited_value) if edited_value else cand.value
         edited = value.casefold() != cand.value.casefold()
+        earlier = self.suppressions.active_for("email", value)
+        if earlier is not None and earlier.reason == "bad_address" and acknowledge_bounce is not True:
+            raise NeedsAcknowledgement(earlier.detail)  # nothing is saved until the user has seen why this address failed
         now = self.outreach_store.now()
         contact = self.outreach_store.set_contact_record(VendorContact(
             vendor_id=vendor_id, email=value, preferred="email", updated_at=now, origin="discovered", source_url=cand.source_url,
             confirmed_by=by.strip(), confirmed_at=now, edited_by_user=edited))
         self.shortlist.update(candidate_id, status="confirmed", confirmed_by=by.strip(), confirmed_at=now, confirmed_value=value if edited else None)
-        self.suppressions.lift_bad_address("email", value, by.strip(), "address re-confirmed by the user")  # a bad address is cleared by editing or re-confirming; a stop request never is
+        self.suppressions.lift_bad_address("email", value, by.strip(), "address re-confirmed by the user", acknowledge_bounce)  # a bad address is cleared by editing or re-confirming; a stop request never is
         return contact
 
     # ------------------------------------------------------------ do not contact
@@ -546,9 +549,9 @@ class EventMate:
         self.conversations.apply_block(channel, value)
         return s
 
-    def lift_suppression(self, suppression_id: str, by: str, reason: str):
-        """Only the user lifts one, with a recorded reason. Drafts that were blocked stay blocked: write a new one."""
-        return self.suppressions.lift(suppression_id, by, reason)
+    def lift_suppression(self, suppression_id: str, by: str, reason: str, acknowledge_reason: bool = False):
+        """Only the user lifts one, with a recorded reason (and, for an address that bounced, having read why). Drafts that were blocked stay blocked: write a new one."""
+        return self.suppressions.lift(suppression_id, by, reason, acknowledge_reason)
 
     def suppression_list(self):
         return [(s, domain_note(s.channel, s.value)) for s in self.suppressions.all()]

@@ -52,6 +52,7 @@ from eventmate.integrations.weather import WeatherError, WeatherNotConfigured
 from eventmate.followthrough.jobs import StaleJob
 from eventmate.followthrough.worker import digest
 from eventmate.sourcing.search import SourceNotSupported
+from eventmate.sourcing.suppression import NeedsAcknowledgement
 from eventmate.integrations.websearch import SearchError
 from eventmate.integrations.travel import CABINS, TravelError, check_date
 
@@ -223,6 +224,7 @@ class WebsiteBody(_Strict):
 class ConfirmContactBody(_Strict):
     by: str = Field(min_length=1, max_length=60)
     edited_value: Optional[str] = Field(default=None, max_length=254)
+    acknowledge_bounce: bool = False  # required to confirm an address that bounced earlier
 
 
 class SuppressBody(_Strict):
@@ -235,6 +237,7 @@ class SuppressBody(_Strict):
 class LiftBody(_Strict):
     by: str = Field(min_length=1, max_length=80)
     reason: str = Field(min_length=1, max_length=200)
+    acknowledge_reason: bool = False  # required for an address that bounced: you confirm you have read why
 
 
 class ByBody(_Strict):
@@ -475,6 +478,10 @@ def create_app(
     @app.errorhandler(404)
     def _404(exc):
         return _err(404, "not found")
+
+    @app.errorhandler(NeedsAcknowledgement)
+    def _needs_ack(exc):
+        return jsonify({"error": str(exc)[:600], "needs_acknowledgement": True, "reason": exc.reason}), 409
 
     @app.errorhandler(StaleJob)
     def _stale(exc):
@@ -1013,7 +1020,7 @@ def create_app(
         plan_id, vendor_id, candidate_id, b = pid(plan_id), pid(vendor_id), pid(candidate_id), body(ConfirmContactBody)
         with lock:
             em.store.latest(plan_id)
-            contact = em.confirm_contact(vendor_id, candidate_id, b.by, b.edited_value)
+            contact = em.confirm_contact(vendor_id, candidate_id, b.by, b.edited_value, b.acknowledge_bounce)
         return out(contact, 201)
 
     @app.post("/api/plans/<plan_id>/shortlist/<vendor_id>/contacts/<candidate_id>/reject")
@@ -1064,7 +1071,7 @@ def create_app(
         """Only you can lift one, and the record says who and why."""
         suppression_id, b = pid(suppression_id), body(LiftBody)
         with lock:
-            s = em.lift_suppression(suppression_id, b.by, b.reason)
+            s = em.lift_suppression(suppression_id, b.by, b.reason, b.acknowledge_reason)
         return out(s)
 
     @app.get("/api/unmatched")
