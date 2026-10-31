@@ -154,3 +154,37 @@ def test_money_paid_to_a_category_no_longer_in_the_plan_is_still_reported(em):
         em.ledger._file(plan.plan_id)._append(e, e.entry_id)
     s = em.ledger_summary(plan.plan_id)
     assert s.orphaned_paid == {"photographer": 4_500} and s.paid_total == 0
+
+
+# ---- audit: refunds against payments are exact, and money recorded for a service that left the plan is reported, not lost
+
+def test_a_refund_may_equal_what_was_paid_but_not_exceed_it(em, pid):
+    em.ledger_add(pid, "payment", C.VENUE, 10_000, "advance")
+    with pytest.raises(ValueError, match="exceeds the INR 10,000 paid"):
+        em.ledger_add(pid, "refund", C.VENUE, 10_001, "too much")
+    em.ledger_add(pid, "refund", C.VENUE, 10_000, "all of it")
+    assert line(em.ledger_summary(pid), C.VENUE).paid == 0
+    with pytest.raises(ValueError, match="exceeds the INR 0 paid"):
+        em.ledger_add(pid, "refund", C.VENUE, 1, "nothing left")
+
+
+def test_a_quote_is_not_a_payment_for_refund_purposes_and_other_services_are_separate(em, pid):
+    em.ledger_add(pid, "quote", C.CATERER, 70_000, "quote")
+    em.ledger_add(pid, "payment", C.VENUE, 5_000, "venue advance")
+    with pytest.raises(ValueError, match="paid to the caterer"):
+        em.ledger_add(pid, "refund", C.CATERER, 1, "no payment was made")
+    with pytest.raises(ValueError, match="paid to the photographer"):
+        em.ledger_add(pid, "refund", C.PHOTOGRAPHER, 1, "different service")
+    em.ledger_add(pid, "payment", C.VENUE, 2_000, "second")
+    em.ledger_add(pid, "refund", C.VENUE, 7_000, "exactly the sum")
+
+
+def test_money_recorded_for_a_service_that_is_no_longer_planned_is_reported_as_orphaned(em, pid):
+    em.ledger_add(pid, "payment", C.PHOTOGRAPHER, 4_000, "advance")
+    em.ledger_add(pid, "quote", C.PHOTOGRAPHER, 9_000, "a quote is not money paid")
+    plan = em.store.latest(pid)
+    without = plan.model_copy(update={"selections": tuple(s for s in plan.selections if s.category != C.PHOTOGRAPHER)})
+    assert em.ledger.summarize(plan).orphaned_paid == {}
+    assert em.ledger.summarize(without).orphaned_paid == {"photographer": 4_000}
+    em.ledger_add(pid, "refund", C.PHOTOGRAPHER, 4_000, "returned")
+    assert em.ledger.summarize(without).orphaned_paid == {}  # fully refunded: nothing is stranded
