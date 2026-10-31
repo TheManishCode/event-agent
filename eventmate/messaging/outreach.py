@@ -79,7 +79,7 @@ def _clean_name(name: str) -> str:
 
 
 def clean_followup(text: str) -> str:
-    text = text.replace("\r\n", "\n").replace("\r", "\n").strip()
+    text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\t", " ").strip()  # a draft body holds no tab, so a pasted one becomes a space
     if not 1 <= len(text) <= MAX_FOLLOWUP_CHARS:
         raise ValueError(f"a follow-up must be 1-{MAX_FOLLOWUP_CHARS} characters")
     if any(unicodedata.category(c) == "Cc" and c not in "\n\t" for c in text):

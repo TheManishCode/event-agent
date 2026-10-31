@@ -205,3 +205,63 @@ def test_the_request_reads_naturally_for_every_event_type(tmp_path, brief, phras
     d = e.draft_outreach(plan_id, C.CATERER, "email", "sales@vendor.test", "Asha")
     assert f"I am organising {phrase} in Pune" in d.body and f"for {phrase} on 2026-12-12" in d.subject
     assert " a engagement" not in d.body + d.subject and " a other" not in d.body + d.subject and "a community in" not in d.body
+
+
+# ---- audit: what may be followed up, how often, and with what text
+
+def _sent(em, pid):
+    from datetime import datetime, timezone
+
+    d = mail(em, pid)
+    return em.outreach_store.transition(pid, d.draft_id, ("prepared",), status="sent", sent_at=datetime(2026, 10, 30, 9, 0, tzinfo=timezone.utc), external_id="<s1@x.test>")
+
+
+def test_only_a_request_that_was_sent_can_be_followed_up(em, pid):
+    store = em.outreach_store
+    with pytest.raises(ValueError, match="unknown request"):
+        store.followup(pid, "nope", "Any news?", "Asha")
+    unsent = mail(em, pid)
+    with pytest.raises(ValueError, match="has been sent"):
+        store.followup(pid, unsent.draft_id, "Any news?", "Asha")
+    sent = _sent(em, pid)
+    follow = store.followup(pid, sent.draft_id, "Any news?", "Asha")
+    assert follow.kind == "followup" and follow.parent_id == sent.draft_id and follow.recipient == sent.recipient and follow.channel == sent.channel
+    with pytest.raises(ValueError, match="unknown request"):  # a follow-up is not itself a request to follow up
+        store.followup(pid, follow.draft_id, "Again?", "Asha")
+
+
+def test_at_most_five_follow_ups_per_request(em, pid):
+    sent = _sent(em, pid)
+    for n in range(5):
+        em.outreach_store.followup(pid, sent.draft_id, f"Any news {n}?", "Asha")
+    with pytest.raises(ValueError, match="at most 5 follow-ups"):
+        em.outreach_store.followup(pid, sent.draft_id, "One more?", "Asha")
+
+
+@pytest.mark.parametrize("text,ok", [("x", True), ("x" * 1000, True), ("", False), ("   ", False), ("x" * 1001, False), ("Hello\x00there", False), ("Line one\nLine two\ttabbed", True)])
+def test_follow_up_text_is_bounded_and_clean(em, pid, text, ok):
+    sent = _sent(em, pid)
+    if ok:
+        assert text.replace("\t", " ").strip() in em.outreach_store.followup(pid, sent.draft_id, text, "Asha").body
+    else:
+        with pytest.raises(ValueError):
+            em.outreach_store.followup(pid, sent.draft_id, text, "Asha")
+
+
+def test_the_follow_up_subject_has_one_re_and_the_sender_name_is_checked(em, pid):
+    sent = _sent(em, pid)
+    first = em.outreach_store.followup(pid, sent.draft_id, "Any news?", "Asha")
+    assert first.subject == "Re: " + sent.subject and not first.subject.startswith("Re: Re:")
+    for bad in ("", "  ", "x" * 81, "As\x00ha", "As\nha"):
+        with pytest.raises(ValueError, match="sender name"):
+            em.outreach_store.followup(pid, sent.draft_id, "Any news?", bad)
+    assert em.outreach_store.followup(pid, sent.draft_id, "Any news?", "x" * 80)
+
+
+def test_a_recipient_must_fit_its_channel(em, pid):
+    for bad in ("not-an-address", "a@b", "a b@c.test", "a@b.test,c@d.test"):
+        with pytest.raises(ValueError):
+            mail(em, pid, recipient=bad)
+    for bad in ("12345", "+0123456789", "98765"):
+        with pytest.raises(ValueError):
+            mail(em, pid, channel="whatsapp", recipient=bad)

@@ -38,6 +38,17 @@ _NUMBER_WORDS = re.compile(
 )
 _MARKUP = re.compile(r"<[A-Za-z/!][^>]*>|```|\]\(|javascript:", re.I)
 _LINK = re.compile(r"https?://|www\.|\b[\w.-]+@[\w.-]+\.\w+", re.I)
+# The whole of each link, address and bare domain, for comparing against evidence. _LINK above only finds that one exists; matching on it alone treats
+# "https://other.example" as present whenever the evidence holds any "https://".
+_LINK_FULL = re.compile(
+    r"https?://[^\s<>\"')\]]+|www\.[^\s<>\"')\]]+|\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+"
+    r"|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|in|org|net|io|co|app|xyz|info|biz|shop|online|site|store|dev|ai|edu|gov)(?![\w-])(?:/[^\s<>\"')\]]*)?", re.I,
+)
+
+
+def links_in(text: str) -> set:
+    """Every link, email address and bare domain in the text, lower-cased and without trailing punctuation."""
+    return {m.group(0).rstrip(".,;:!?").lower() for m in _LINK_FULL.finditer(text or "")}
 
 
 class PromptError(Exception):
@@ -80,7 +91,7 @@ def guard_rewrite(output: str, source: str, names: Iterable[str]) -> Optional[st
         return "output length out of range"
     if _MARKUP.search(output):
         return "markup not allowed"
-    if _LINK.search(output) and not _LINK.search(source):
+    if (_LINK.search(output) and not _LINK.search(source)) or links_in(output) - links_in(source):
         return "link not allowed"
     allowed = set(_NUMBER.findall(source))
     extra = sorted(set(_NUMBER.findall(output)) - allowed)

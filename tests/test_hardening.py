@@ -327,3 +327,72 @@ def test_modules_that_read_the_open_web_never_import_a_model_or_a_shell():
                 if isinstance(node.func, ast.Attribute) and node.func.attr in banned_attrs:
                     problems.append(f"{name} calls .{node.func.attr}()")
     assert problems == []
+
+
+# ---- audit: the assistant's policy file fails closed, and card numbers are masked by checksum
+
+import json as _json  # noqa: E402
+
+from eventmate.assistant import guard as _guard  # noqa: E402
+
+
+def _policy(tmp_path, **changes):
+    base = _json.loads((__import__("pathlib").Path(_guard.__file__).resolve().parent.parent / "data" / "assistant_policy.json").read_text())
+    base.update(changes)
+    p = tmp_path / "policy.json"
+    p.write_text(_json.dumps(base))
+    return p
+
+
+@pytest.mark.parametrize("change", [
+    {"schema_version": 2}, {"blocked_names": [""]}, {"blocked_names": ["x" * 81]}, {"blocked_phrases": [5]}, {"retries": 6}, {"retries": -1}, {"backoff_seconds": 6}, {"backoff_seconds": -0.1},
+    {"max_est_tokens_per_user_per_hour": 0}, {"blocked_input_phrases": ["x" * 81]}, {"blocked_input_phrases": [""]}, {"preset_reply": ""}, {"preset_reply": "x" * 301}, {"preset_reply": "see <b>this</b>"},
+    {"min_retrieval_score": 21}, {"min_retrieval_score": -1},
+])
+def test_a_malformed_policy_stops_the_assistant_instead_of_running_unguarded(tmp_path, change):
+    with pytest.raises(_guard.PolicyError):
+        _guard.load_policy(_policy(tmp_path, **change))
+
+
+def test_the_edges_of_a_valid_policy_load(tmp_path):
+    p = _guard.load_policy(_policy(tmp_path, retries=5, backoff_seconds=5, max_est_tokens_per_user_per_hour=1, preset_reply="x" * 300, min_retrieval_score=20, blocked_names=["x" * 80]))
+    assert p["retries"] == 5 and p["backoff"] == 5.0 and p["token_cap"] == 1 and len(p["preset_reply"]) == 300 and p["min_retrieval_score"] == 20
+    with pytest.raises(_guard.PolicyError):
+        _guard.load_policy(tmp_path / "missing.json")
+
+
+@pytest.mark.parametrize("number,masked", [
+    ("4111 1111 1111 1111", True), ("4111111111111111", True), ("378282246310005", True), ("4222222222222", True), ("6011111111111117", True), ("3530111333300000", True),
+    ("4111 1111 1111 1112", False), ("1234567890123", False),
+])
+def test_card_numbers_are_masked_by_checksum_and_look_alikes_are_not(number, masked):
+    assert ("[card]" in _guard.mask_pii("pay with " + number + " now")) is masked
+
+
+def test_an_empty_or_oversized_answer_and_a_new_link_are_refused():
+    assert _guard.check_answer("  ", "e") == "empty answer"
+    assert _guard.check_answer("x" * 3001, "e") == "answer too long"
+    assert _guard.check_answer("See https://other.example", "evidence https://mine.example") == "link or address not in the evidence"
+    assert _guard.check_answer("See https://mine.example", "evidence https://mine.example") is None
+    assert _guard.check_answer("It is 7, 8, 9, 10, 11, 12 or 13", "evidence").startswith("number not in the evidence: ['10', '11', '12', '13', '7']")
+
+
+@pytest.mark.parametrize("answer,evidence,refused", [
+    ("See https://other.example/x", "evidence https://mine.example", True),
+    ("See https://mine.example/other-page", "evidence https://mine.example", True),
+    ("See https://mine.example", "evidence https://mine.example", False),
+    ("See HTTPS://MINE.EXAMPLE.", "evidence https://mine.example", False),
+    ("Visit evil.com for deals", "nothing", True), ("Visit evil.com/deals now", "nothing", True), ("Visit www.evil.test", "nothing", True), ("Mail evil@x.test", "nothing", True),
+    ("Mail sales@shop.test.", "contact sales@shop.test", False), ("Visit shop.example.", "their site is shop.example", False),
+    ("Nothing to link here, e.g. a plain sentence.", "nothing", False), ("It costs 5.5k, i.e. about that.", "5.5", False),
+])
+def test_a_link_address_or_domain_the_evidence_did_not_supply_is_refused(answer, evidence, refused):
+    assert (_guard.check_answer(answer, evidence) == "link or address not in the evidence") is refused
+
+
+def test_the_explainer_check_refuses_a_new_link_even_when_the_source_has_another():
+    from eventmate.llm import guard_rewrite
+
+    src = "Plan verified. Details at https://mine.example for Royal Rasoi, 3 vendors."
+    assert guard_rewrite("Plan verified. Details at https://mine.example for Royal Rasoi, 3 vendors.", src, ["Royal Rasoi"]) is None
+    assert guard_rewrite("Plan verified. Details at https://evil.example for Royal Rasoi, 3 vendors.", src, ["Royal Rasoi"]) == "link not allowed"

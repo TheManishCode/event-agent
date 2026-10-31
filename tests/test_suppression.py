@@ -523,3 +523,29 @@ def test_the_batch_request_skips_a_suppressed_address(em, pid):
     em.suppress_address("email", "r@rasoi.test", "Asha")
     made, skipped = em.request_all_quotes(pid, "Asha")
     assert made == [] and any("do not contact" in s for s in skipped)
+
+
+# ---- audit: two spellings of one mailbox share one suppression; two different mailboxes never do
+
+@pytest.mark.parametrize("a,b,same", [
+    ("Sales@Shop.Example", "sales@shop.example", True), ("a.b@gmail.com", "ab@gmail.com", True), ("a+promo@gmail.com", "a@gmail.com", True), ("a.b+x@googlemail.com", "ab@gmail.com", True),
+    ("a+x@outlook.com", "a@outlook.com", True), ("a.b@outlook.com", "ab@outlook.com", False), ("a+x@shop.example", "a@shop.example", False), ("a.b@shop.example", "ab@shop.example", False),
+    ("a@gmail.com", "b@gmail.com", False), ("a@gmail.com", "a@outlook.com", False), ("a+x+y@gmail.com", "a@gmail.com", True),
+])
+def test_the_same_mailbox_matches_and_different_ones_do_not(a, b, same):
+    assert (normalise_address("email", a) == normalise_address("email", b)) is same
+
+
+@pytest.mark.parametrize("number,ok", [("+91 98765 43210", True), ("12345678", True), ("123456789012345", True), ("1234567", False), ("1234567890123456", False), ("0123456789", False), ("", False), ("abc", False)])
+def test_a_whatsapp_number_is_8_to_15_digits_not_starting_with_zero(number, ok):
+    if ok:
+        assert normalise_address("whatsapp", number).isdigit()
+    else:
+        with pytest.raises(ValueError):
+            normalise_address("whatsapp", number)
+
+
+@pytest.mark.parametrize("bad", ["", "no-at-sign", "a@b", "a b@c.test", None, "a@b.test\nBcc: x@y.test"])
+def test_a_malformed_email_is_refused_by_normalisation(bad):
+    with pytest.raises(ValueError):
+        normalise_address("email", bad)
